@@ -777,79 +777,95 @@ def render_gallery(service_client, submissions):
         ]
 
         with column:
-            with st.container(
-                border=True,
-            ):
-                try:
-                    signed = (
-                        service_client.storage.from_(
-                            st.secrets[
-                                "SUPABASE_BUCKET"
-                            ]
-                        ).create_signed_url(
-                            first_photo[
-                                "storage_path"
-                            ],
-                            60 * 60,
-                        )
-                    )
-
-                    image_url = signed.get(
-                        "signedURL"
-                    ) or signed.get(
-                        "signedUrl"
-                    )
-
-                    if image_url:
-                        st.image(
-                            image_url,
-                            use_container_width=True,
-                        )
-                    else:
-                        st.warning(
-                            "Preview unavailable."
-                        )
-                except Exception:
-                    st.warning(
-                        "Preview unavailable."
-                    )
-
-                if submission.get(
-                    "date_type"
-                ) == "exact":
-                    date_text = format_date(
-                        submission.get(
-                            "exact_date"
-                        )
-                    )
-                else:
-                    date_text = (
-                        submission.get(
-                            "estimated_date"
-                        )
-                        or "Date unknown"
-                    )
-
-                st.caption(
-                    f"**{date_text}**"
+            try:
+                signed = service_client.storage.from_(
+                    st.secrets[
+                        "SUPABASE_BUCKET"
+                    ]
+                ).create_signed_url(
+                    first_photo[
+                        "storage_path"
+                    ],
+                    60 * 60,
                 )
 
-                st.caption(
+                image_url = signed.get(
+                    "signedURL"
+                ) or signed.get(
+                    "signedUrl"
+                )
+
+                if not image_url:
+                    image_url = ""
+            except Exception:
+                image_url = ""
+
+            if image_url:
+                st.markdown(
+                    f"""
+                    <div style="
+                        aspect-ratio: 1 / 1;
+                        overflow: hidden;
+                        border-radius: 12px;
+                        margin-bottom: 0.5rem;
+                        background-color: #F1ECE4;
+                    ">
+                        <img
+                            src="{image_url}"
+                            alt="Photograph from a shared memory"
+                            style="
+                                width: 100%;
+                                height: 100%;
+                                object-fit: cover;
+                                object-position: center;
+                                display: block;
+                            "
+                        />
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.warning(
+                    "Preview unavailable."
+                )
+
+            if submission.get(
+                "date_type"
+            ) == "exact":
+                date_text = format_date(
                     submission.get(
-                        "people_in_photo"
+                        "exact_date"
                     )
-                    or ""
+                )
+            else:
+                date_text = (
+                    submission.get(
+                        "estimated_date"
+                    )
+                    or "Date unknown"
                 )
 
-                if st.button(
-                    "View photographs and memory",
-                    key=f"gallery-{submission['id']}",
-                    use_container_width=True,
-                ):
-                    st.session_state.selected_gallery_submission = (
-                        submission["id"]
-                    )
-                    st.rerun()
+            st.caption(
+                f"**{date_text}**"
+            )
+
+            st.caption(
+                submission.get(
+                    "people_in_photo"
+                )
+                or ""
+            )
+
+            if st.button(
+                "View photographs and memory",
+                key=f"gallery-{submission['id']}",
+                use_container_width=True,
+            ):
+                st.session_state.selected_gallery_submission = (
+                    submission["id"]
+                )
+                st.rerun()
 
 
 def render_gallery_detail(
