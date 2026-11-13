@@ -1,10 +1,15 @@
+import io
 import os
 import uuid
 from datetime import date, datetime
 
 import pandas as pd
 import streamlit as st
+from PIL import Image
+from pillow_heif import register_heif_opener
 from supabase import create_client, Client
+
+register_heif_opener()
 
 st.set_page_config(
     page_title="Photos and Memories",
@@ -12,7 +17,16 @@ st.set_page_config(
     layout="wide",
 )
 
-ALLOWED_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+ALLOWED_TYPES = {
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+    "image/heic",
+    "image/heif",
+    "application/octet-stream",
+}
+
 MAX_PHOTOS = 5
 MAX_FILE_MB = 25
 
@@ -51,6 +65,43 @@ def format_date(value):
     return value.strftime("%d %B %Y")
 
 
+def convert_to_jpeg(uploaded_file):
+    """Convert HEIC or HEIF images to JPEG before uploading to Supabase."""
+
+    filename = uploaded_file.name.lower()
+
+    if not filename.endswith((".heic", ".heif")):
+        return (
+            uploaded_file.getvalue(),
+            uploaded_file.type,
+            uploaded_file.name,
+        )
+
+    image = Image.open(uploaded_file)
+
+    if image.mode not in {"RGB", "L"}:
+        image = image.convert("RGB")
+
+    jpeg_buffer = io.BytesIO()
+
+    image.save(
+        jpeg_buffer,
+        format="JPEG",
+        quality=90,
+        optimize=True,
+    )
+
+    jpeg_filename = (
+        os.path.splitext(uploaded_file.name)[0] + ".jpg"
+    )
+
+    return (
+        jpeg_buffer.getvalue(),
+        "image/jpeg",
+        jpeg_filename,
+    )
+
+
 def make_caption(submission):
     if submission.get("date_type") == "exact":
         date_text = format_date(submission.get("exact_date"))
@@ -65,7 +116,9 @@ def make_caption(submission):
     if postcode:
         location_text = f"{location_text}, {postcode}".strip(", ")
 
-    context_parts = [part for part in [date_text, location_text] if part]
+    context_parts = [
+        part for part in [date_text, location_text] if part
+    ]
     context = " — ".join(context_parts)
 
     caption = submission.get("people_in_photo") or ""
@@ -210,18 +263,39 @@ def render_public_upload():
 
         uploaded_files = st.file_uploader(
             f"Choose up to {MAX_PHOTOS} photos *",
-            type=["jpg", "jpeg", "png", "webp"],
+            type=[
+                "jpg",
+                "jpeg",
+                "png",
+                "webp",
+                "heic",
+                "heif",
+            ],
             accept_multiple_files=True,
         )
 
         if uploaded_files:
-            st.info(f"{len(uploaded_files)} photo(s) selected.")
+            st.info(
+                f"{len(uploaded_files)} photo(s) selected."
+            )
 
-            preview_columns = st.columns(min(len(uploaded_files), 3))
+            preview_columns = st.columns(
+                min(len(uploaded_files), 3)
+            )
 
-            for index, uploaded_file in enumerate(uploaded_files[:6]):
+            for index, uploaded_file in enumerate(
+                uploaded_files[:6]
+            ):
                 with preview_columns[index % 3]:
-                    st.image(uploaded_file, use_container_width=True)
+                    try:
+                        st.image(
+                            uploaded_file,
+                            use_container_width=True,
+                        )
+                    except Exception:
+                        st.caption(
+                            uploaded_file.name
+                        )
 
         submitted = st.form_submit_button(
             "Submit photos and memory",
@@ -263,7 +337,7 @@ def render_public_upload():
             if uploaded_file.type not in ALLOWED_TYPES:
                 errors.append(
                     f"{uploaded_file.name} is not a supported image type. "
-                    "Please use JPG, JPEG, PNG or WEBP."
+                    "Please use JPG, JPEG, PNG, WEBP, HEIC or HEIF."
                 )
 
             if uploaded_file.size > MAX_FILE_MB * 1024 * 1024:
@@ -285,14 +359,18 @@ def render_public_upload():
     submission_record = {
         "id": submission_id,
         "submitter_name": submitter_name.strip(),
-        "submitter_relationship": submitter_relationship.strip() or None,
+        "submitter_relationship": (
+            submitter_relationship.strip() or None
+        ),
         "people_in_photo": people_in_photo.strip(),
         "date_type": (
             "exact"
             if date_type == "Yes — I know the exact date"
             else "estimated"
         ),
-        "exact_date": exact_date.isoformat() if exact_date else None,
+        "exact_date": (
+            exact_date.isoformat() if exact_date else None
+        ),
         "estimated_date": estimated_date.strip() or None,
         "location": location.strip() or None,
         "postcode": postcode.strip() or None,
@@ -308,14 +386,22 @@ def render_public_upload():
                 uploaded_files,
                 start=1,
             ):
-                filename = safe_filename(uploaded_file.name)
-                storage_path = f"pending/{submission_id}/{filename}"
+                (
+                    file_bytes,
+                    content_type,
+                    original_filename,
+                ) = convert_to_jpeg(uploaded_file)
+
+                filename = safe_filename(original_filename)
+                storage_path = (
+                    f"pending/{submission_id}/{filename}"
+                )
 
                 public_client.storage.from_(bucket).upload(
-                    file=uploaded_file.getvalue(),
+                    file=file_bytes,
                     path=storage_path,
                     file_options={
-                        "content-type": uploaded_file.type,
+                        "content-type": content_type,
                         "cache-control": "3600",
                         "upsert": "false",
                     },
@@ -325,7 +411,7 @@ def render_public_upload():
                     {
                         "submission_id": submission_id,
                         "storage_path": storage_path,
-                        "original_filename": uploaded_file.name,
+                        "original_filename": original_filename,
                         "photo_order": photo_order,
                     }
                 )
@@ -352,10 +438,15 @@ def render_public_upload():
 def curator_login() -> bool:
     st.title("🔐 Curator dashboard")
 
-    password = st.text_input("Curator password", type="password")
+    password = st.text_input(
+        "Curator password",
+        type="password",
+    )
 
     if not password:
-        st.info("Enter the curator password to continue.")
+        st.info(
+            "Enter the curator password to continue."
+        )
         return False
 
     if password != st.secrets["CURATOR_PASSWORD"]:
@@ -406,7 +497,9 @@ def render_timeline(submissions):
     st.subheader("Upload timeline")
 
     if not submissions:
-        st.info("No submissions have been received yet.")
+        st.info(
+            "No submissions have been received yet."
+        )
         return
 
     submissions_by_day = {}
@@ -418,7 +511,10 @@ def render_timeline(submissions):
             [],
         ).append(submission)
 
-    for day in sorted(submissions_by_day.keys(), reverse=True):
+    for day in sorted(
+        submissions_by_day.keys(),
+        reverse=True,
+    ):
         day_submissions = submissions_by_day[day]
 
         with st.container(border=True):
@@ -431,7 +527,9 @@ def render_timeline(submissions):
             )
 
             for submission in day_submissions:
-                photo_count = len(submission.get("photos", []))
+                photo_count = len(
+                    submission.get("photos", [])
+                )
 
                 with st.expander(
                     f"{submission['submitter_name']} — "
@@ -445,7 +543,9 @@ def render_timeline(submissions):
                         f"**Shared by:** {submission['submitter_name']}"
                     )
 
-                    if submission.get("submitter_relationship"):
+                    if submission.get(
+                        "submitter_relationship"
+                    ):
                         st.markdown(
                             "**Relationship:** "
                             f"{submission['submitter_relationship']}"
@@ -527,10 +627,14 @@ def render_curator_dashboard():
                 if submission["status"] == status_filter
             ]
 
-        st.markdown(f"### {len(filtered)} submission(s)")
+        st.markdown(
+            f"### {len(filtered)} submission(s)"
+        )
 
         if not filtered:
-            st.info("No submissions match this filter.")
+            st.info(
+                "No submissions match this filter."
+            )
 
         for submission in filtered:
             with st.container(border=True):
@@ -576,21 +680,32 @@ def render_curator_dashboard():
                     f"**Current status:** `{submission['status']}`"
                 )
 
-                photos = submission.get("photos", [])
+                photos = submission.get(
+                    "photos",
+                    [],
+                )
 
                 if photos:
                     photo_columns = st.columns(
                         min(len(photos), 3)
                     )
 
-                    for index, photo in enumerate(photos):
-                        with photo_columns[index % 3]:
+                    for index, photo in enumerate(
+                        photos
+                    ):
+                        with photo_columns[
+                            index % 3
+                        ]:
                             try:
-                                signed = service_client.storage.from_(
-                                    bucket
-                                ).create_signed_url(
-                                    photo["storage_path"],
-                                    60 * 60,
+                                signed = (
+                                    service_client.storage.from_(
+                                        bucket
+                                    ).create_signed_url(
+                                        photo[
+                                            "storage_path"
+                                        ],
+                                        60 * 60,
+                                    )
                                 )
 
                                 image_url = signed.get(
@@ -631,20 +746,28 @@ def render_curator_dashboard():
                         "approved",
                         "private",
                         "rejected",
-                    ].index(submission["status"]),
+                    ].index(
+                        submission["status"]
+                    ),
                     key=f"status-{submission['id']}",
                 )
 
                 display_order = st.number_input(
                     "Display order",
                     min_value=0,
-                    value=submission.get("display_order") or 0,
+                    value=submission.get(
+                        "display_order"
+                    )
+                    or 0,
                     key=f"order-{submission['id']}",
                 )
 
                 curator_notes = st.text_area(
                     "Curator notes",
-                    value=submission.get("curator_notes") or "",
+                    value=submission.get(
+                        "curator_notes"
+                    )
+                    or "",
                     height=90,
                     key=f"notes-{submission['id']}",
                 )
@@ -653,10 +776,14 @@ def render_curator_dashboard():
                     "Save changes",
                     key=f"save-{submission['id']}",
                 ):
-                    service_client.table("submissions").update(
+                    service_client.table(
+                        "submissions"
+                    ).update(
                         {
                             "status": new_status,
-                            "display_order": int(display_order),
+                            "display_order": int(
+                                display_order
+                            ),
                             "curator_notes": curator_notes,
                         }
                     ).eq(
@@ -683,7 +810,10 @@ def render_curator_dashboard():
         export_rows = []
 
         for submission in submissions:
-            photos = submission.get("photos", [])
+            photos = submission.get(
+                "photos",
+                [],
+            )
 
             if not photos:
                 export_rows.append(
@@ -701,9 +831,13 @@ def render_curator_dashboard():
                         "people_in_photo": submission[
                             "people_in_photo"
                         ],
-                        "date_type": submission["date_type"],
+                        "date_type": submission[
+                            "date_type"
+                        ],
                         "exact_date": format_date(
-                            submission.get("exact_date")
+                            submission.get(
+                                "exact_date"
+                            )
                         ),
                         "estimated_date": submission.get(
                             "estimated_date"
@@ -757,9 +891,13 @@ def render_curator_dashboard():
                         "people_in_photo": submission[
                             "people_in_photo"
                         ],
-                        "date_type": submission["date_type"],
+                        "date_type": submission[
+                            "date_type"
+                        ],
                         "exact_date": format_date(
-                            submission.get("exact_date")
+                            submission.get(
+                                "exact_date"
+                            )
                         ),
                         "estimated_date": submission.get(
                             "estimated_date"
