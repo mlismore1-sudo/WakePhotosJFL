@@ -204,34 +204,34 @@ def render_public_upload():
 
         st.markdown("#### When was this photo taken?")
 
-        date_type = st.radio(
-            "Do you know the exact date the photo was taken?",
-            options=[
-                "No — I only know an approximate date or period",
-                "Yes — I know the exact date",
-            ],
-            index=0,
-            horizontal=True,
+        st.markdown(
+            "Please provide either an exact date or an approximate date. "
+            "You only need to complete one of these."
         )
 
-        exact_date = None
-        estimated_date = ""
+        col_exact_date, col_estimated_date = st.columns(2)
 
-        if date_type == "Yes — I know the exact date":
+        with col_exact_date:
             exact_date = st.date_input(
-                "Select the exact date",
+                "Exact date",
                 value=None,
                 min_value=date(1900, 1, 1),
                 max_value=date.today(),
                 format="DD/MM/YYYY",
-                help="Choose the date from the calendar.",
+                help=(
+                    "Optional. Choose the exact date from the calendar."
+                ),
             )
-        else:
+
+        with col_estimated_date:
             estimated_date = st.text_input(
-                "Approximate date or period",
+                "Exact date unknown — approximate date or period",
                 placeholder=(
-                    "For example: Summer 1980, the 1980s, "
+                    "For example: Summer 1970, the 1980s, "
                     "around my wedding"
+                ),
+                help=(
+                    "Optional. Use this if you do not know the exact date."
                 ),
             )
 
@@ -323,13 +323,10 @@ def render_public_upload():
             f"Please upload no more than {MAX_PHOTOS} photos per memory."
         )
 
-    if (
-        date_type == "Yes — I know the exact date"
-        and exact_date is None
-    ):
+    if exact_date is None and not estimated_date.strip():
         errors.append(
-            "Please choose the exact date from the calendar, "
-            "or switch to an approximate date."
+            "Please provide either an exact date or an approximate "
+            "date or period."
         )
 
     if uploaded_files:
@@ -365,7 +362,7 @@ def render_public_upload():
         "people_in_photo": people_in_photo.strip(),
         "date_type": (
             "exact"
-            if date_type == "Yes — I know the exact date"
+            if exact_date is not None
             else "estimated"
         ),
         "exact_date": (
