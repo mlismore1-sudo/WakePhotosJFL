@@ -480,11 +480,13 @@ def render_public_upload():
                 )
 
         public_client.table("submissions").insert(
-            submission_record
+            submission_record,
+            returning="minimal",
         ).execute()
 
         public_client.table("submission_photos").insert(
-            uploaded_photo_records
+            uploaded_photo_records,
+            returning="minimal",
         ).execute()
 
         st.session_state.submission_complete = True
@@ -495,7 +497,13 @@ def render_public_upload():
             "Sorry, we could not save your submission. "
             "Please try again, or email the photographs to the family."
         )
-        st.exception(error)
+
+        error_details = getattr(error, "args", None)
+
+        if error_details:
+            st.error(f"Technical details: {error_details}")
+        else:
+            st.error(f"Technical details: {error}")
 
 
 def curator_login() -> bool:
