@@ -754,7 +754,14 @@ def render_gallery(service_client, submissions):
         f"### {len(gallery_submissions)} memories"
     )
 
-    for submission in gallery_submissions:
+    gallery_columns = st.columns(
+        3,
+        gap="small",
+    )
+
+    for index, submission in enumerate(
+        gallery_submissions
+    ):
         photos = submission.get(
             "photos",
             [],
@@ -765,12 +772,14 @@ def render_gallery(service_client, submissions):
 
         first_photo = photos[0]
 
-        with st.container(border=True):
-            col_photo, col_details = st.columns(
-                [1, 2]
-            )
+        column = gallery_columns[
+            index % 3
+        ]
 
-            with col_photo:
+        with column:
+            with st.container(
+                border=True,
+            ):
                 try:
                     signed = (
                         service_client.storage.from_(
@@ -805,7 +814,6 @@ def render_gallery(service_client, submissions):
                         "Preview unavailable."
                     )
 
-            with col_details:
                 if submission.get(
                     "date_type"
                 ) == "exact":
@@ -822,15 +830,15 @@ def render_gallery(service_client, submissions):
                         or "Date unknown"
                     )
 
-                st.markdown(
+                st.caption(
                     f"**{date_text}**"
                 )
-                st.markdown(
-                    "**People / occasion:** "
-                    f"{submission.get('people_in_photo') or 'Not provided'}"
-                )
-                st.markdown(
-                    f"**Photographs:** {len(photos)}"
+
+                st.caption(
+                    submission.get(
+                        "people_in_photo"
+                    )
+                    or ""
                 )
 
                 if st.button(
