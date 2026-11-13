@@ -44,22 +44,24 @@ def safe_filename(filename: str) -> str:
 def format_date(value):
     if not value:
         return ""
+
     if isinstance(value, str):
         return value
+
     return value.strftime("%d %B %Y")
 
 
-def make_caption(submission, photo=None):
-    date_text = (
-        format_date(submission.get("exact_date"))
-        if submission.get("date_type") == "exact"
-        else submission.get("estimated_date") or ""
-    )
+def make_caption(submission):
+    if submission.get("date_type") == "exact":
+        date_text = format_date(submission.get("exact_date"))
+    else:
+        date_text = submission.get("estimated_date") or ""
 
     location = submission.get("location") or ""
     postcode = submission.get("postcode") or ""
 
     location_text = location
+
     if postcode:
         location_text = f"{location_text}, {postcode}".strip(", ")
 
@@ -72,10 +74,12 @@ def make_caption(submission, photo=None):
         caption += f"\n{context}"
 
     memory = submission.get("memory")
+
     if memory:
         caption += f'\n“{memory}”'
 
     submitter = submission.get("submitter_name")
+
     if submitter:
         caption += f"\nShared by {submitter}"
 
@@ -119,6 +123,7 @@ def render_public_upload():
                 "Thank you again for helping to create this collection of "
                 "photos and memories."
             )
+
         return
 
     with st.form("memory_submission", clear_on_submit=True):
@@ -144,9 +149,14 @@ def render_public_upload():
             height=110,
         )
 
+        st.markdown("#### When was this photo taken?")
+
         date_type = st.radio(
-            "Do you know the exact date the photo was taken?",
-            options=["No — I can give an approximate date", "Yes — I know the exact date"],
+            "How well do you know the date?",
+            options=[
+                "I know the exact date",
+                "I only know an approximate date or period",
+            ],
             index=0,
             horizontal=True,
         )
@@ -154,13 +164,14 @@ def render_public_upload():
         exact_date = None
         estimated_date = ""
 
-        if date_type == "Yes — I know the exact date":
+        if date_type == "I know the exact date":
             exact_date = st.date_input(
-                "Exact date",
+                "Select the exact date",
                 value=None,
                 min_value=date(1900, 1, 1),
                 max_value=date.today(),
                 format="DD/MM/YYYY",
+                help="Choose the date from the calendar.",
             )
         else:
             estimated_date = st.text_input(
@@ -229,10 +240,15 @@ def render_public_upload():
         errors.append("Please choose at least one photo.")
 
     if uploaded_files and len(uploaded_files) > MAX_PHOTOS:
-        errors.append(f"Please upload no more than {MAX_PHOTOS} photos per memory.")
+        errors.append(
+            f"Please upload no more than {MAX_PHOTOS} photos per memory."
+        )
 
-    if date_type == "Yes — I know the exact date" and exact_date is None:
-        errors.append("Please choose the exact date, or switch to an approximate date.")
+    if date_type == "I know the exact date" and exact_date is None:
+        errors.append(
+            "Please choose the exact date from the calendar, "
+            "or switch to an approximate date."
+        )
 
     if uploaded_files:
         for uploaded_file in uploaded_files:
@@ -250,6 +266,7 @@ def render_public_upload():
     if errors:
         for error in errors:
             st.error(error)
+
         return
 
     submission_id = str(uuid.uuid4())
@@ -261,7 +278,11 @@ def render_public_upload():
         "submitter_name": submitter_name.strip(),
         "submitter_relationship": submitter_relationship.strip() or None,
         "people_in_photo": people_in_photo.strip(),
-        "date_type": "exact" if date_type == "Yes — I know the exact date" else "estimated",
+        "date_type": (
+            "exact"
+            if date_type == "I know the exact date"
+            else "estimated"
+        ),
         "exact_date": exact_date.isoformat() if exact_date else None,
         "estimated_date": estimated_date.strip() or None,
         "location": location.strip() or None,
@@ -274,7 +295,10 @@ def render_public_upload():
 
     try:
         with st.spinner("Uploading photos..."):
-            for photo_order, uploaded_file in enumerate(uploaded_files, start=1):
+            for photo_order, uploaded_file in enumerate(
+                uploaded_files,
+                start=1,
+            ):
                 filename = safe_filename(uploaded_file.name)
                 storage_path = f"pending/{submission_id}/{filename}"
 
@@ -298,7 +322,9 @@ def render_public_upload():
                 )
 
         public_client.table("submissions").insert(submission_record).execute()
-        public_client.table("submission_photos").insert(uploaded_photo_records).execute()
+        public_client.table("submission_photos").insert(
+            uploaded_photo_records
+        ).execute()
 
         st.session_state.submission_complete = True
         st.rerun()
@@ -350,10 +376,16 @@ def load_curator_data():
     photos_by_submission = {}
 
     for photo in photos:
-        photos_by_submission.setdefault(photo["submission_id"], []).append(photo)
+        photos_by_submission.setdefault(
+            photo["submission_id"],
+            [],
+        ).append(photo)
 
     for submission in submissions:
-        submission["photos"] = photos_by_submission.get(submission["id"], [])
+        submission["photos"] = photos_by_submission.get(
+            submission["id"],
+            [],
+        )
 
     return service_client, submissions
 
@@ -368,52 +400,71 @@ def render_timeline(submissions):
     submissions_by_day = {}
 
     for submission in submissions:
-        submitted_at = submission["created_at"][:10]
-        submissions_by_day.setdefault(submitted_at, []).append(submission)
+        submitted_day = submission["created_at"][:10]
+        submissions_by_day.setdefault(submitted_day, []).append(submission)
 
     for day in sorted(submissions_by_day.keys(), reverse=True):
         day_submissions = submissions_by_day[day]
 
         with st.container(border=True):
-            st.markdown(f"### {datetime.strptime(day, '%Y-%m-%d').strftime('%d %B %Y')}")
+            st.markdown(
+                f"### "
+                f"{datetime.strptime(day, '%Y-%m-%d').strftime('%d %B %Y')}"
+            )
             st.markdown(f"**{len(day_submissions)} submission(s)**")
 
             for submission in day_submissions:
                 photo_count = len(submission.get("photos", []))
 
                 with st.expander(
-                    f"{submission['submitter_name']} — {photo_count} photo(s) — "
+                    f"{submission['submitter_name']} — "
+                    f"{photo_count} photo(s) — "
                     f"{submission['status'].title()}"
                 ):
-                    st.markdown(f"**Submitted at:** {submission['created_at']}")
-                    st.markdown(f"**Shared by:** {submission['submitter_name']}")
+                    st.markdown(
+                        f"**Submitted at:** {submission['created_at']}"
+                    )
+                    st.markdown(
+                        f"**Shared by:** {submission['submitter_name']}"
+                    )
 
                     if submission.get("submitter_relationship"):
                         st.markdown(
-                            f"**Relationship:** {submission['submitter_relationship']}"
+                            "**Relationship:** "
+                            f"{submission['submitter_relationship']}"
                         )
 
                     st.markdown(
-                        f"**People / occasion:** {submission['people_in_photo']}"
+                        "**People / occasion:** "
+                        f"{submission['people_in_photo']}"
                     )
 
                     if submission["date_type"] == "exact":
                         st.markdown(
-                            f"**Exact date:** {format_date(submission.get('exact_date'))}"
+                            "**Exact date:** "
+                            f"{format_date(submission.get('exact_date'))}"
                         )
                     else:
                         st.markdown(
-                            f"**Approximate date:** {submission.get('estimated_date') or 'Not provided'}"
+                            "**Approximate date:** "
+                            f"{submission.get('estimated_date') or 'Not provided'}"
                         )
 
                     if submission.get("location"):
-                        st.markdown(f"**Location:** {submission['location']}")
+                        st.markdown(
+                            f"**Location:** {submission['location']}"
+                        )
 
                     if submission.get("postcode"):
-                        st.markdown(f"**Postcode / ZIP:** {submission['postcode']}")
+                        st.markdown(
+                            "**Postcode / ZIP:** "
+                            f"{submission['postcode']}"
+                        )
 
                     if submission.get("memory"):
-                        st.markdown(f"**Memory:** {submission['memory']}")
+                        st.markdown(
+                            f"**Memory:** {submission['memory']}"
+                        )
 
                     st.markdown(f"**Photos:** {photo_count}")
 
@@ -425,7 +476,11 @@ def render_curator_dashboard():
     bucket = st.secrets["SUPABASE_BUCKET"]
 
     tab_timeline, tab_review, tab_export = st.tabs(
-        ["Timeline", "Review and edit", "Export"]
+        [
+            "Timeline",
+            "Review and edit",
+            "Export",
+        ]
     )
 
     with tab_timeline:
@@ -434,7 +489,13 @@ def render_curator_dashboard():
     with tab_review:
         status_filter = st.selectbox(
             "Filter by status",
-            options=["All", "pending", "approved", "private", "rejected"],
+            options=[
+                "All",
+                "pending",
+                "approved",
+                "private",
+                "rejected",
+            ],
             index=0,
         )
 
@@ -454,34 +515,54 @@ def render_curator_dashboard():
 
         for submission in filtered:
             with st.container(border=True):
-                st.markdown(f"#### Shared by {submission['submitter_name']}")
-                st.markdown(f"**Submitted:** {submission['created_at']}")
-                st.markdown(f"**People / occasion:** {submission['people_in_photo']}")
+                st.markdown(
+                    f"#### Shared by {submission['submitter_name']}"
+                )
+                st.markdown(
+                    f"**Submitted:** {submission['created_at']}"
+                )
+                st.markdown(
+                    "**People / occasion:** "
+                    f"{submission['people_in_photo']}"
+                )
 
                 if submission["date_type"] == "exact":
                     st.markdown(
-                        f"**Exact date:** {format_date(submission.get('exact_date'))}"
+                        "**Exact date:** "
+                        f"{format_date(submission.get('exact_date'))}"
                     )
                 else:
                     st.markdown(
-                        f"**Approximate date:** {submission.get('estimated_date') or 'Not provided'}"
+                        "**Approximate date:** "
+                        f"{submission.get('estimated_date') or 'Not provided'}"
                     )
 
                 if submission.get("location"):
-                    st.markdown(f"**Location:** {submission['location']}")
+                    st.markdown(
+                        f"**Location:** {submission['location']}"
+                    )
 
                 if submission.get("postcode"):
-                    st.markdown(f"**Postcode / ZIP:** {submission['postcode']}")
+                    st.markdown(
+                        "**Postcode / ZIP:** "
+                        f"{submission['postcode']}"
+                    )
 
                 if submission.get("memory"):
-                    st.markdown(f"**Memory:** {submission['memory']}")
+                    st.markdown(
+                        f"**Memory:** {submission['memory']}"
+                    )
 
-                st.markdown(f"**Current status:** `{submission['status']}`")
+                st.markdown(
+                    f"**Current status:** `{submission['status']}`"
+                )
 
                 photos = submission.get("photos", [])
 
                 if photos:
-                    photo_columns = st.columns(min(len(photos), 3))
+                    photo_columns = st.columns(
+                        min(len(photos), 3)
+                    )
 
                     for index, photo in enumerate(photos):
                         with photo_columns[index % 3]:
@@ -493,16 +574,23 @@ def render_curator_dashboard():
                                     60 * 60,
                                 )
 
-                                image_url = signed.get("signedURL") or signed.get(
-                                    "signedUrl"
-                                )
+                                image_url = signed.get(
+                                    "signedURL"
+                                ) or signed.get("signedUrl")
 
                                 if image_url:
-                                    st.image(image_url, use_container_width=True)
+                                    st.image(
+                                        image_url,
+                                        use_container_width=True,
+                                    )
                                 else:
-                                    st.warning("Preview unavailable.")
+                                    st.warning(
+                                        "Preview unavailable."
+                                    )
                             except Exception:
-                                st.warning("Preview unavailable.")
+                                st.warning(
+                                    "Preview unavailable."
+                                )
 
                             st.caption(
                                 f"Photo {photo['photo_order']}: "
@@ -511,7 +599,12 @@ def render_curator_dashboard():
 
                 new_status = st.selectbox(
                     "Set submission status",
-                    options=["pending", "approved", "private", "rejected"],
+                    options=[
+                        "pending",
+                        "approved",
+                        "private",
+                        "rejected",
+                    ],
                     index=[
                         "pending",
                         "approved",
@@ -551,7 +644,10 @@ def render_curator_dashboard():
                     st.rerun()
 
                 st.markdown("#### Suggested wake caption")
-                st.code(make_caption(submission), language="text")
+                st.code(
+                    make_caption(submission),
+                    language="text",
+                )
 
     with tab_export:
         st.subheader("Export for Google Sheets")
@@ -564,25 +660,44 @@ def render_curator_dashboard():
             if not photos:
                 export_rows.append(
                     {
-                        "submission_created_at": submission["created_at"],
-                        "submitter_name": submission["submitter_name"],
+                        "submission_created_at": submission[
+                            "created_at"
+                        ],
+                        "submitter_name": submission[
+                            "submitter_name"
+                        ],
                         "submitter_relationship": submission.get(
                             "submitter_relationship"
                         )
                         or "",
-                        "people_in_photo": submission["people_in_photo"],
+                        "people_in_photo": submission[
+                            "people_in_photo"
+                        ],
                         "date_type": submission["date_type"],
-                        "exact_date": format_date(submission.get("exact_date")),
-                        "estimated_date": submission.get("estimated_date") or "",
-                        "location": submission.get("location") or "",
-                        "postcode": submission.get("postcode") or "",
+                        "exact_date": format_date(
+                            submission.get("exact_date")
+                        ),
+                        "estimated_date": submission.get(
+                            "estimated_date"
+                        )
+                        or "",
+                        "location": submission.get("location")
+                        or "",
+                        "postcode": submission.get("postcode")
+                        or "",
                         "memory": submission.get("memory") or "",
                         "photo_filename": "",
                         "photo_storage_path": "",
                         "photo_order": "",
                         "submission_status": submission["status"],
-                        "display_order": submission.get("display_order") or 0,
-                        "curator_notes": submission.get("curator_notes") or "",
+                        "display_order": submission.get(
+                            "display_order"
+                        )
+                        or 0,
+                        "curator_notes": submission.get(
+                            "curator_notes"
+                        )
+                        or "",
                         "caption": make_caption(submission),
                     }
                 )
@@ -590,31 +705,56 @@ def render_curator_dashboard():
             for photo in photos:
                 export_rows.append(
                     {
-                        "submission_created_at": submission["created_at"],
-                        "submitter_name": submission["submitter_name"],
+                        "submission_created_at": submission[
+                            "created_at"
+                        ],
+                        "submitter_name": submission[
+                            "submitter_name"
+                        ],
                         "submitter_relationship": submission.get(
                             "submitter_relationship"
                         )
                         or "",
-                        "people_in_photo": submission["people_in_photo"],
+                        "people_in_photo": submission[
+                            "people_in_photo"
+                        ],
                         "date_type": submission["date_type"],
-                        "exact_date": format_date(submission.get("exact_date")),
-                        "estimated_date": submission.get("estimated_date") or "",
-                        "location": submission.get("location") or "",
-                        "postcode": submission.get("postcode") or "",
+                        "exact_date": format_date(
+                            submission.get("exact_date")
+                        ),
+                        "estimated_date": submission.get(
+                            "estimated_date"
+                        )
+                        or "",
+                        "location": submission.get("location")
+                        or "",
+                        "postcode": submission.get("postcode")
+                        or "",
                         "memory": submission.get("memory") or "",
-                        "photo_filename": photo["original_filename"],
-                        "photo_storage_path": photo["storage_path"],
+                        "photo_filename": photo[
+                            "original_filename"
+                        ],
+                        "photo_storage_path": photo[
+                            "storage_path"
+                        ],
                         "photo_order": photo["photo_order"],
                         "submission_status": submission["status"],
-                        "display_order": submission.get("display_order") or 0,
-                        "curator_notes": submission.get("curator_notes") or "",
+                        "display_order": submission.get(
+                            "display_order"
+                        )
+                        or 0,
+                        "curator_notes": submission.get(
+                            "curator_notes"
+                        )
+                        or "",
                         "caption": make_caption(submission),
                     }
                 )
 
         if not export_rows:
-            st.info("No submissions available to export yet.")
+            st.info(
+                "No submissions available to export yet."
+            )
             return
 
         df = pd.DataFrame(export_rows)
@@ -640,8 +780,9 @@ def render_curator_dashboard():
             5. Choose **Replace spreadsheet** or **Insert new sheet(s)**.
             6. Click **Import data**.
 
-            Each row represents one photo. If a memory has five photos, it will
-            appear across five rows, with the shared memory details repeated.
+            Each row represents one photo. If a memory has five photos,
+            it will appear across five rows, with the shared memory details
+            repeated.
             """
         )
 
@@ -651,7 +792,10 @@ def render_curator_dashboard():
 def main():
     page = st.sidebar.radio(
         "Choose an area",
-        options=["Upload a photo", "Curator dashboard"],
+        options=[
+            "Upload a photo",
+            "Curator dashboard",
+        ],
     )
 
     if page == "Upload a photo":
