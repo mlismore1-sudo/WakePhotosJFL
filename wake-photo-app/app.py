@@ -12,7 +12,7 @@ from supabase import create_client, Client
 register_heif_opener()
 
 st.set_page_config(
-    page_title="Photos and Memories",
+    page_title="In Loving Memory Of John Francis Lismore",
     page_icon="🤍",
     layout="wide",
 )
@@ -154,14 +154,14 @@ def render_public_upload():
                 color: #33302B;
                 font-weight: 600;
             ">
-                In loving memory
+                In Loving Memory Of John Francis Lismore
             </h1>
             <p style="
                 margin: 0;
                 color: #5C554B;
                 font-size: 1.05rem;
             ">
-                Sharing photographs and memories of Dad
+                Sharing photographs and memories
             </p>
         </div>
         """,
@@ -170,7 +170,7 @@ def render_public_upload():
 
     st.markdown(
         """
-        We are gathering photographs and memories of Dad to share at his wake
+        We are gathering photographs and memories of John to share at his wake
         and to keep as a lasting family collection.
 
         Please add any photographs you would like to share — from family
@@ -192,28 +192,22 @@ def render_public_upload():
         st.markdown(
             """
             Your contribution will help us create a collection of photographs
-            and memories to share at Dad’s wake, and to keep for the family
+            and memories to share at John’s wake, and to keep for the family
             afterwards.
             """
         )
 
-        another = st.radio(
-            "Would you like to add photographs from another memory?",
-            options=[
-                "No, thank you",
-                "Yes, add another memory",
-            ],
-            index=0,
-        )
-
-        if another == "Yes, add another memory":
+        if st.button(
+            "Click here to share photographs from another memory",
+            use_container_width=True,
+        ):
             st.session_state.submission_complete = False
             st.rerun()
-        else:
-            st.info(
-                "Thank you again for helping to create this collection of "
-                "photographs and memories."
-            )
+
+        st.info(
+            "Thank you again for helping to create this collection of "
+            "photographs and memories."
+        )
 
         return
 
@@ -227,7 +221,7 @@ def render_public_upload():
             )
 
             submitter_relationship = st.text_input(
-                "Your relationship to Dad",
+                "Your relationship to John",
                 placeholder=(
                     "For example: daughter, son, friend, colleague"
                 ),
@@ -241,7 +235,7 @@ def render_public_upload():
             people_in_photo = st.text_area(
                 "Who is in the photo, and what was the occasion? *",
                 placeholder=(
-                    "For example: Dad with Mum, Sarah and James at "
+                    "For example: John with Mum, Sarah and James at "
                     "Christmas 1998."
                 ),
                 height=110,
@@ -251,7 +245,7 @@ def render_public_upload():
                 "Memory or story",
                 placeholder=(
                     "Please share anything you remember — a funny moment, "
-                    "what Dad was like, why the photo matters, or a message "
+                    "what John was like, why the photo matters, or a message "
                     "you would like included."
                 ),
                 height=160,
@@ -323,12 +317,13 @@ def render_public_upload():
 
                 They can be formal or candid, recent or many years old. If you
                 have several photographs from the same occasion, you can add
-                them together.
+                them together. If you have further memories, you can select to
+                share further memories below.
                 """
             )
 
             uploaded_files = st.file_uploader(
-                "Choose up to five photographs *",
+                "Drag and drop photographs here, or click to choose files",
                 type=[
                     "jpg",
                     "jpeg",
