@@ -13,7 +13,7 @@ register_heif_opener()
 
 st.set_page_config(
     page_title="Photos and Memories",
-    page_icon="📷",
+    page_icon="🤍",
     layout="wide",
 )
 
@@ -140,16 +140,43 @@ def make_caption(submission):
 
 
 def render_public_upload():
-    st.title("📷 Photos and Memories")
     st.markdown(
         """
-        Thank you for sharing photographs and memories.
+        <div style="
+            text-align: center;
+            padding: 2rem 1.5rem;
+            background-color: #F1ECE4;
+            border-radius: 16px;
+            margin-bottom: 2rem;
+        ">
+            <h1 style="
+                margin: 0 0 0.5rem 0;
+                color: #33302B;
+                font-weight: 600;
+            ">
+                In loving memory
+            </h1>
+            <p style="
+                margin: 0;
+                color: #5C554B;
+                font-size: 1.05rem;
+            ">
+                Sharing photographs and memories of Dad
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-        Please add photos from any part of Dad’s life — family occasions,
-        holidays, work, friendships, sport, everyday moments, or photos we may
-        never have seen.
+    st.markdown(
+        """
+        We are gathering photographs and memories of Dad to share at his wake
+        and to keep as a lasting family collection.
 
-        You can upload **up to five photos** for each memory or occasion.
+        Please add any photographs you would like to share — from family
+        occasions, holidays, work, friendships, sport, or everyday moments.
+        Photographs we may never have seen are especially welcome.
+
         Approximate dates and partial information are completely fine.
         """
     )
@@ -159,146 +186,187 @@ def render_public_upload():
 
     if st.session_state.submission_complete:
         st.success(
-            "Thank you — your photos and memory have been received."
+            "Thank you — your photographs and memory have been received."
+        )
+
+        st.markdown(
+            """
+            Your contribution will help us create a collection of photographs
+            and memories to share at Dad’s wake, and to keep for the family
+            afterwards.
+            """
         )
 
         another = st.radio(
-            "Would you like to submit photos about another memory?",
-            options=["No", "Yes"],
+            "Would you like to add photographs from another memory?",
+            options=[
+                "No, thank you",
+                "Yes, add another memory",
+            ],
             index=0,
         )
 
-        if another == "Yes":
+        if another == "Yes, add another memory":
             st.session_state.submission_complete = False
             st.rerun()
         else:
             st.info(
                 "Thank you again for helping to create this collection of "
-                "photos and memories."
+                "photographs and memories."
             )
 
         return
 
     with st.form("memory_submission", clear_on_submit=True):
-        st.subheader("About you")
+        with st.container(border=True):
+            st.subheader("About you")
 
-        submitter_name = st.text_input(
-            "Your name *",
-            placeholder="For example: Sarah Smith",
-        )
-
-        submitter_relationship = st.text_input(
-            "Your relationship to Dad",
-            placeholder="For example: daughter, son, friend, colleague",
-        )
-
-        st.subheader("About this memory")
-
-        people_in_photo = st.text_area(
-            "Who is in the photo, and what was the occasion? *",
-            placeholder=(
-                "For example: Dad with Mum, Sarah and James at Christmas 1998."
-            ),
-            height=110,
-        )
-
-        st.markdown("#### When was this photo taken?")
-
-        st.markdown(
-            "Please provide either an exact date or an approximate date. "
-            "You only need to complete one of these."
-        )
-
-        col_exact_date, col_estimated_date = st.columns(2)
-
-        with col_exact_date:
-            exact_date = st.date_input(
-                "Exact date",
-                value=None,
-                min_value=date(1900, 1, 1),
-                max_value=date.today(),
-                format="DD/MM/YYYY",
-                help=(
-                    "Optional. Choose the exact date from the calendar."
-                ),
+            submitter_name = st.text_input(
+                "Your name *",
+                placeholder="For example: Sarah Smith",
             )
 
-        with col_estimated_date:
-            estimated_date = st.text_input(
-                "Exact date unknown — approximate date or period",
+            submitter_relationship = st.text_input(
+                "Your relationship to Dad",
                 placeholder=(
-                    "For example: Summer 1970, the 1980s, "
-                    "around my wedding"
-                ),
-                help=(
-                    "Optional. Use this if you do not know the exact date."
+                    "For example: daughter, son, friend, colleague"
                 ),
             )
 
-        col_location, col_postcode = st.columns(2)
+        st.markdown("")
 
-        with col_location:
-            location = st.text_input(
-                "Where was it taken?",
-                placeholder="For example: home, Cornwall, wedding venue",
+        with st.container(border=True):
+            st.subheader("The memory")
+
+            people_in_photo = st.text_area(
+                "Who is in the photo, and what was the occasion? *",
+                placeholder=(
+                    "For example: Dad with Mum, Sarah and James at "
+                    "Christmas 1998."
+                ),
+                height=110,
             )
 
-        with col_postcode:
-            postcode = st.text_input(
-                "Postcode or ZIP code",
-                help="Optional. This can help us map the photos later.",
-                placeholder="For example: BR6 or SW1A 1AA",
+            memory = st.text_area(
+                "Memory or story",
+                placeholder=(
+                    "Please share anything you remember — a funny moment, "
+                    "what Dad was like, why the photo matters, or a message "
+                    "you would like included."
+                ),
+                height=160,
             )
 
-        memory = st.text_area(
-            "Memory or story",
-            placeholder=(
-                "Please share anything you remember — a funny moment, what Dad "
-                "was like, why the photo matters, or a message you would like included."
-            ),
-            height=150,
-        )
+        st.markdown("")
 
-        st.subheader("Upload photos")
+        with st.container(border=True):
+            st.subheader("When and where")
 
-        uploaded_files = st.file_uploader(
-            f"Choose up to {MAX_PHOTOS} photos *",
-            type=[
-                "jpg",
-                "jpeg",
-                "png",
-                "webp",
-                "heic",
-                "heif",
-            ],
-            accept_multiple_files=True,
-        )
-
-        if uploaded_files:
-            st.info(
-                f"{len(uploaded_files)} photo(s) selected."
+            st.markdown(
+                "Please provide either an exact date or an approximate date. "
+                "You only need to complete one of these."
             )
 
-            preview_columns = st.columns(
-                min(len(uploaded_files), 3)
+            col_exact_date, col_estimated_date = st.columns(2)
+
+            with col_exact_date:
+                exact_date = st.date_input(
+                    "Exact date",
+                    value=None,
+                    min_value=date(1900, 1, 1),
+                    max_value=date.today(),
+                    format="DD/MM/YYYY",
+                    help=(
+                        "Optional. Choose the exact date from the calendar."
+                    ),
+                )
+
+            with col_estimated_date:
+                estimated_date = st.text_input(
+                    "Exact date unknown — approximate date or period",
+                    placeholder=(
+                        "For example: Summer 1970, the 1980s, "
+                        "around my wedding"
+                    ),
+                    help=(
+                        "Optional. Use this if you do not know the exact date."
+                    ),
+                )
+
+            col_location, col_postcode = st.columns(2)
+
+            with col_location:
+                location = st.text_input(
+                    "Where was it taken?",
+                    placeholder=(
+                        "For example: home, Cornwall, wedding venue"
+                    ),
+                )
+
+            with col_postcode:
+                postcode = st.text_input(
+                    "Postcode or ZIP code",
+                    help=(
+                        "Optional. This can help us map the photos later."
+                    ),
+                    placeholder="For example: BR6 or SW1A 1AA",
+                )
+
+        st.markdown("")
+
+        with st.container(border=True):
+            st.subheader("Your photographs")
+
+            st.markdown(
+                """
+                Please upload up to five photographs connected to this memory.
+
+                They can be formal or candid, recent or many years old. If you
+                have several photographs from the same occasion, you can add
+                them together.
+                """
             )
 
-            for index, uploaded_file in enumerate(
-                uploaded_files[:6]
-            ):
-                with preview_columns[index % 3]:
-                    try:
-                        st.image(
-                            uploaded_file,
-                            use_container_width=True,
-                        )
-                    except Exception:
-                        st.caption(
-                            uploaded_file.name
-                        )
+            uploaded_files = st.file_uploader(
+                "Choose up to five photographs *",
+                type=[
+                    "jpg",
+                    "jpeg",
+                    "png",
+                    "webp",
+                    "heic",
+                    "heif",
+                ],
+                accept_multiple_files=True,
+            )
+
+            if uploaded_files:
+                st.info(
+                    f"{len(uploaded_files)} photograph(s) selected."
+                )
+
+                preview_columns = st.columns(
+                    min(len(uploaded_files), 3)
+                )
+
+                for index, uploaded_file in enumerate(
+                    uploaded_files[:6]
+                ):
+                    with preview_columns[index % 3]:
+                        try:
+                            st.image(
+                                uploaded_file,
+                                use_container_width=True,
+                            )
+                        except Exception:
+                            st.caption(
+                                uploaded_file.name
+                            )
+
+        st.markdown("")
 
         submitted = st.form_submit_button(
-            "Submit photos and memory",
+            "Share these photographs and memories",
             use_container_width=True,
         )
 
@@ -316,11 +384,14 @@ def render_public_upload():
         )
 
     if not uploaded_files:
-        errors.append("Please choose at least one photo.")
+        errors.append(
+            "Please choose at least one photograph."
+        )
 
     if uploaded_files and len(uploaded_files) > MAX_PHOTOS:
         errors.append(
-            f"Please upload no more than {MAX_PHOTOS} photos per memory."
+            f"Please upload no more than {MAX_PHOTOS} photographs "
+            "per memory."
         )
 
     if exact_date is None and not estimated_date.strip():
@@ -378,7 +449,7 @@ def render_public_upload():
     uploaded_photo_records = []
 
     try:
-        with st.spinner("Uploading photos..."):
+        with st.spinner("Sharing your photographs..."):
             for photo_order, uploaded_file in enumerate(
                 uploaded_files,
                 start=1,
@@ -427,7 +498,7 @@ def render_public_upload():
     except Exception as error:
         st.error(
             "Sorry, we could not save your submission. "
-            "Please try again, or email the photos to the family."
+            "Please try again, or email the photographs to the family."
         )
         st.exception(error)
 
@@ -530,7 +601,7 @@ def render_timeline(submissions):
 
                 with st.expander(
                     f"{submission['submitter_name']} — "
-                    f"{photo_count} photo(s) — "
+                    f"{photo_count} photograph(s) — "
                     f"{submission['status'].title()}"
                 ):
                     st.markdown(
@@ -581,7 +652,7 @@ def render_timeline(submissions):
                         )
 
                     st.markdown(
-                        f"**Photos:** {photo_count}"
+                        f"**Photographs:** {photo_count}"
                     )
 
 
@@ -726,7 +797,7 @@ def render_curator_dashboard():
                                 )
 
                             st.caption(
-                                f"Photo {photo['photo_order']}: "
+                                f"Photograph {photo['photo_order']}: "
                                 f"{photo['original_filename']}"
                             )
 
@@ -969,9 +1040,9 @@ def render_curator_dashboard():
             5. Choose **Replace spreadsheet** or **Insert new sheet(s)**.
             6. Click **Import data**.
 
-            Each row represents one photo. If a memory has five photos,
-            it will appear across five rows, with the shared memory details
-            repeated.
+            Each row represents one photograph. If a memory has five
+            photographs, it will appear across five rows, with the shared
+            memory details repeated.
             """
         )
 
@@ -985,12 +1056,12 @@ def main():
     page = st.sidebar.radio(
         "Choose an area",
         options=[
-            "Upload a photo",
+            "Share a photograph",
             "Curator dashboard",
         ],
     )
 
-    if page == "Upload a photo":
+    if page == "Share a photograph":
         render_public_upload()
     else:
         if curator_login():
