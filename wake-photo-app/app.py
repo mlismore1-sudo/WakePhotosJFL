@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import uuid
 from datetime import date, datetime
 
@@ -137,6 +138,43 @@ def make_caption(submission):
         caption += f"\nShared by {submitter}"
 
     return caption
+
+
+def get_photo_sort_year(submission):
+    """Return a sortable year for a submission."""
+
+    if (
+        submission.get("date_type") == "exact"
+        and submission.get("exact_date")
+    ):
+        try:
+            return int(
+                str(submission["exact_date"])[:4]
+            )
+        except (TypeError, ValueError):
+            pass
+
+    estimated_date = (
+        submission.get("estimated_date") or ""
+    ).lower()
+
+    year_match = re.search(
+        r"\b(18\d{2}|19\d{2}|20\d{2})\b",
+        estimated_date,
+    )
+
+    if year_match:
+        return int(year_match.group(1))
+
+    decade_match = re.search(
+        r"\b(18|19|20)\d0s\b",
+        estimated_date,
+    )
+
+    if decade_match:
+        return int(decade_match.group(0)[:4])
+
+    return 9999
 
 
 def render_public_upload():
@@ -501,9 +539,13 @@ def render_public_upload():
         error_details = getattr(error, "args", None)
 
         if error_details:
-            st.error(f"Technical details: {error_details}")
+            st.error(
+                f"Technical details: {error_details}"
+            )
         else:
-            st.error(f"Technical details: {error}")
+            st.error(
+                f"Technical details: {error}"
+            )
 
 
 def curator_login() -> bool:
@@ -659,15 +701,174 @@ def render_timeline(submissions):
                     )
 
 
+def render_gallery(service_client, submissions):
+    st.subheader("Photo gallery")
+
+    st.markdown(
+        """
+        Photographs are shown in time order, from the earliest date to the
+        most recent. Exact dates are sorted precisely; approximate dates are
+        placed using the year or decade entered.
+        """
+    )
+
+    gallery_submissions = [
+        submission
+        for submission in submissions
+        if submission.get("status") == "approved"
+        and submission.get("photos")
+    ]
+
+    if not gallery_submissions:
+        st.info(
+            "No approved photographs are available for the gallery yet. "
+            "Approve submissions in the **Review and edit** tab."
+        )
+        return
+
+    gallery_submissions.sort(
+        key=get_photo_sort_year,
+    )
+
+    photo_count = 0
+
+    for submission in gallery_submissions:
+        photos = submission.get("photos", [])
+
+        for photo in photos:
+            photo_count += 1
+
+    st.markdown(
+        f"### {photo_count} approved photograph(s)"
+    )
+
+    gallery_columns = st.columns(
+        3,
+        gap="small",
+    )
+
+    for index, submission in enumerate(
+        gallery_submissions
+    ):
+        photos = submission.get(
+            "photos",
+            [],
+        )
+
+        for photo in photos:
+            column = gallery_columns[
+                index % 3
+            ]
+
+            with column:
+                try:
+                    signed = (
+                        service_client.storage.from_(
+                            st.secrets[
+                                "SUPABASE_BUCKET"
+                            ]
+                        ).create_signed_url(
+                            photo["storage_path"],
+                            60 * 60,
+                        )
+                    )
+
+                    image_url = signed.get(
+                        "signedURL"
+                    ) or signed.get(
+                        "signedUrl"
+                    )
+
+                    if image_url:
+                        st.image(
+                            image_url,
+                            use_container_width=True,
+                        )
+                    else:
+                        st.warning(
+                            "Preview unavailable."
+                        )
+                except Exception:
+                    st.warning(
+                        "Preview unavailable."
+                    )
+
+                if submission.get(
+                    "date_type"
+                ) == "exact":
+                    date_text = format_date(
+                        submission.get(
+                            "exact_date"
+                        )
+                    )
+                else:
+                    date_text = (
+                        submission.get(
+                            "estimated_date"
+                        )
+                        or "Date unknown"
+                    )
+
+                st.caption(
+                    f"**{date_text}**\n\n"
+                    f"{submission.get('people_in_photo') or ''}\n\n"
+                    f"Shared by "
+                    f"{submission.get('submitter_name') or 'Unknown'}"
+                )
+
+                with st.expander(
+                    "View memory"
+                ):
+                    st.markdown(
+                        "**People / occasion:** "
+                        f"{submission.get('people_in_photo') or 'Not provided'}"
+                    )
+
+                    if submission.get(
+                        "location"
+                    ):
+                        st.markdown(
+                            f"**Location:** "
+                            f"{submission['location']}"
+                        )
+
+                    if submission.get(
+                        "postcode"
+                    ):
+                        st.markdown(
+                            "**Postcode / ZIP:** "
+                            f"{submission['postcode']}"
+                        )
+
+                    if submission.get(
+                        "memory"
+                    ):
+                        st.markdown(
+                            f"**Memory:** "
+                            f"{submission['memory']}"
+                        )
+
+                    st.markdown(
+                        "**Suggested caption:**"
+                    )
+                    st.code(
+                        make_caption(
+                            submission
+                        ),
+                        language="text",
+                    )
+
+
 def render_curator_dashboard():
     st.title("📋 Photo submissions")
 
     service_client, submissions = load_curator_data()
     bucket = st.secrets["SUPABASE_BUCKET"]
 
-    tab_timeline, tab_review, tab_export = st.tabs(
+    tab_timeline, tab_gallery, tab_review, tab_export = st.tabs(
         [
             "Timeline",
+            "Gallery",
             "Review and edit",
             "Export",
         ]
@@ -675,6 +876,12 @@ def render_curator_dashboard():
 
     with tab_timeline:
         render_timeline(submissions)
+
+    with tab_gallery:
+        render_gallery(
+            service_client,
+            submissions,
+        )
 
     with tab_review:
         status_filter = st.selectbox(
