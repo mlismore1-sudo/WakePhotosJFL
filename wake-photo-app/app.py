@@ -1,10 +1,8 @@
 import io
 import os
 import re
-import smtplib
 import uuid
 from datetime import datetime
-from email.message import EmailMessage
 
 import pandas as pd
 import streamlit as st
@@ -145,75 +143,27 @@ def get_rotated_preview(
     return image
 
 
-def send_confirmation_email(
-    email_address,
-    submitter_name,
-):
-    """Send an optional confirmation email if SMTP settings are available."""
-
-    try:
-        smtp_host = st.secrets["SMTP_HOST"]
-        smtp_port = int(
-            st.secrets["SMTP_PORT"]
-        )
-        smtp_user = st.secrets["SMTP_USER"]
-        smtp_password = st.secrets[
-            "SMTP_PASSWORD"
-        ]
-        from_email = st.secrets["FROM_EMAIL"]
-    except KeyError:
-        return False
-
-    try:
-        message = EmailMessage()
-
-        message["Subject"] = (
-            "Thank you for sharing photographs"
-        )
-
-        message["From"] = from_email
-        message["To"] = email_address
-
-        message.set_content(
-            f"""
-Hi {submitter_name},
-
-Thank you for sharing photographs for John’s memory collection.
-
-Your photographs have been received and will be reviewed by the family
-before being added to the shared gallery.
-
-If you would like to share more photographs, you can return to the
-submission page at any time.
-
-With thanks,
-The family of John Francis Lismore
-            """
-        )
-
-        with smtplib.SMTP(
-            smtp_host,
-            smtp_port,
-        ) as server:
-            server.starttls()
-            server.login(
-                smtp_user,
-                smtp_password,
-            )
-            server.send_message(message)
-
-        return True
-
-    except Exception:
-        return False
-
-
 def initialise_submission_state():
     if "submission_step" not in st.session_state:
         st.session_state.submission_step = 1
 
     if "submission_complete" not in st.session_state:
         st.session_state.submission_complete = False
+
+    if "submitter_name" not in st.session_state:
+        st.session_state.submitter_name = ""
+
+    if "photo_year" not in st.session_state:
+        st.session_state.photo_year = ""
+
+    if "master_caption" not in st.session_state:
+        st.session_state.master_caption = ""
+
+    if "year_decade" not in st.session_state:
+        st.session_state.year_decade = ""
+
+    if "year_from_decade" not in st.session_state:
+        st.session_state.year_from_decade = ""
 
     if "photo_id_map" not in st.session_state:
         st.session_state.photo_id_map = {}
@@ -349,16 +299,6 @@ def render_step_one():
         "Your name *",
         key="submitter_name",
         placeholder="For example: Sarah Smith",
-    )
-
-    st.text_input(
-        "Your email address",
-        key="submitter_email",
-        placeholder="For example: name@example.com",
-        help=(
-            "Optional. If you provide an email address, we can send you a "
-            "short confirmation after your photographs have been received."
-        ),
     )
 
     st.info(
@@ -749,11 +689,21 @@ def render_step_three(
 ):
     st.subheader("Check your photographs")
 
+    submitter_name = st.session_state.get(
+        "submitter_name",
+        "",
+    )
+
+    photo_year = st.session_state.get(
+        "photo_year",
+        "",
+    )
+
     st.markdown(
         f"""
-        **Shared by:** {st.session_state.submitter_name}
+        **Shared by:** {submitter_name}
 
-        **Year:** {st.session_state.photo_year or "Not provided"}
+        **Year:** {photo_year or "Not provided"}
 
         **Photographs:** {len(uploaded_files)}
         """
@@ -1006,12 +956,6 @@ def submit_photos(
         ).execute()
 
         progress_bar.empty()
-
-        if st.session_state.submitter_email.strip():
-            send_confirmation_email(
-                st.session_state.submitter_email.strip(),
-                st.session_state.submitter_name.strip(),
-            )
 
         st.session_state.submission_complete = True
         st.rerun()
