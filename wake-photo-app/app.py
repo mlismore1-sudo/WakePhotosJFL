@@ -152,10 +152,10 @@ def render_public_upload():
         st.markdown("#### When was this photo taken?")
 
         date_type = st.radio(
-            "How well do you know the date?",
+            "Do you know the exact date the photo was taken?",
             options=[
-                "I know the exact date",
-                "I only know an approximate date or period",
+                "No — I only know an approximate date or period",
+                "Yes — I know the exact date",
             ],
             index=0,
             horizontal=True,
@@ -164,7 +164,7 @@ def render_public_upload():
         exact_date = None
         estimated_date = ""
 
-        if date_type == "I know the exact date":
+        if date_type == "Yes — I know the exact date":
             exact_date = st.date_input(
                 "Select the exact date",
                 value=None,
@@ -176,7 +176,10 @@ def render_public_upload():
         else:
             estimated_date = st.text_input(
                 "Approximate date or period",
-                placeholder="For example: about 1998, the 1980s, summer 2004",
+                placeholder=(
+                    "For example: Summer 1980, the 1980s, "
+                    "around my wedding"
+                ),
             )
 
         col_location, col_postcode = st.columns(2)
@@ -234,7 +237,9 @@ def render_public_upload():
         errors.append("Please enter your name.")
 
     if not people_in_photo.strip():
-        errors.append("Please say who is in the photo or what the occasion was.")
+        errors.append(
+            "Please say who is in the photo or what the occasion was."
+        )
 
     if not uploaded_files:
         errors.append("Please choose at least one photo.")
@@ -244,7 +249,10 @@ def render_public_upload():
             f"Please upload no more than {MAX_PHOTOS} photos per memory."
         )
 
-    if date_type == "I know the exact date" and exact_date is None:
+    if (
+        date_type == "Yes — I know the exact date"
+        and exact_date is None
+    ):
         errors.append(
             "Please choose the exact date from the calendar, "
             "or switch to an approximate date."
@@ -260,7 +268,8 @@ def render_public_upload():
 
             if uploaded_file.size > MAX_FILE_MB * 1024 * 1024:
                 errors.append(
-                    f"{uploaded_file.name} is larger than {MAX_FILE_MB} MB."
+                    f"{uploaded_file.name} is larger than "
+                    f"{MAX_FILE_MB} MB."
                 )
 
     if errors:
@@ -280,7 +289,7 @@ def render_public_upload():
         "people_in_photo": people_in_photo.strip(),
         "date_type": (
             "exact"
-            if date_type == "I know the exact date"
+            if date_type == "Yes — I know the exact date"
             else "estimated"
         ),
         "exact_date": exact_date.isoformat() if exact_date else None,
@@ -321,7 +330,10 @@ def render_public_upload():
                     }
                 )
 
-        public_client.table("submissions").insert(submission_record).execute()
+        public_client.table("submissions").insert(
+            submission_record
+        ).execute()
+
         public_client.table("submission_photos").insert(
             uploaded_photo_records
         ).execute()
@@ -401,7 +413,10 @@ def render_timeline(submissions):
 
     for submission in submissions:
         submitted_day = submission["created_at"][:10]
-        submissions_by_day.setdefault(submitted_day, []).append(submission)
+        submissions_by_day.setdefault(
+            submitted_day,
+            [],
+        ).append(submission)
 
     for day in sorted(submissions_by_day.keys(), reverse=True):
         day_submissions = submissions_by_day[day]
@@ -411,7 +426,9 @@ def render_timeline(submissions):
                 f"### "
                 f"{datetime.strptime(day, '%Y-%m-%d').strftime('%d %B %Y')}"
             )
-            st.markdown(f"**{len(day_submissions)} submission(s)**")
+            st.markdown(
+                f"**{len(day_submissions)} submission(s)**"
+            )
 
             for submission in day_submissions:
                 photo_count = len(submission.get("photos", []))
@@ -466,7 +483,9 @@ def render_timeline(submissions):
                             f"**Memory:** {submission['memory']}"
                         )
 
-                    st.markdown(f"**Photos:** {photo_count}")
+                    st.markdown(
+                        f"**Photos:** {photo_count}"
+                    )
 
 
 def render_curator_dashboard():
@@ -576,7 +595,9 @@ def render_curator_dashboard():
 
                                 image_url = signed.get(
                                     "signedURL"
-                                ) or signed.get("signedUrl")
+                                ) or signed.get(
+                                    "signedUrl"
+                                )
 
                                 if image_url:
                                     st.image(
@@ -638,19 +659,26 @@ def render_curator_dashboard():
                             "display_order": int(display_order),
                             "curator_notes": curator_notes,
                         }
-                    ).eq("id", submission["id"]).execute()
+                    ).eq(
+                        "id",
+                        submission["id"],
+                    ).execute()
 
                     st.success("Saved.")
                     st.rerun()
 
-                st.markdown("#### Suggested wake caption")
+                st.markdown(
+                    "#### Suggested wake caption"
+                )
                 st.code(
                     make_caption(submission),
                     language="text",
                 )
 
     with tab_export:
-        st.subheader("Export for Google Sheets")
+        st.subheader(
+            "Export for Google Sheets"
+        )
 
         export_rows = []
 
@@ -681,15 +709,24 @@ def render_curator_dashboard():
                             "estimated_date"
                         )
                         or "",
-                        "location": submission.get("location")
+                        "location": submission.get(
+                            "location"
+                        )
                         or "",
-                        "postcode": submission.get("postcode")
+                        "postcode": submission.get(
+                            "postcode"
+                        )
                         or "",
-                        "memory": submission.get("memory") or "",
+                        "memory": submission.get(
+                            "memory"
+                        )
+                        or "",
                         "photo_filename": "",
                         "photo_storage_path": "",
                         "photo_order": "",
-                        "submission_status": submission["status"],
+                        "submission_status": submission[
+                            "status"
+                        ],
                         "display_order": submission.get(
                             "display_order"
                         )
@@ -698,7 +735,9 @@ def render_curator_dashboard():
                             "curator_notes"
                         )
                         or "",
-                        "caption": make_caption(submission),
+                        "caption": make_caption(
+                            submission
+                        ),
                     }
                 )
 
@@ -726,19 +765,30 @@ def render_curator_dashboard():
                             "estimated_date"
                         )
                         or "",
-                        "location": submission.get("location")
+                        "location": submission.get(
+                            "location"
+                        )
                         or "",
-                        "postcode": submission.get("postcode")
+                        "postcode": submission.get(
+                            "postcode"
+                        )
                         or "",
-                        "memory": submission.get("memory") or "",
+                        "memory": submission.get(
+                            "memory"
+                        )
+                        or "",
                         "photo_filename": photo[
                             "original_filename"
                         ],
                         "photo_storage_path": photo[
                             "storage_path"
                         ],
-                        "photo_order": photo["photo_order"],
-                        "submission_status": submission["status"],
+                        "photo_order": photo[
+                            "photo_order"
+                        ],
+                        "submission_status": submission[
+                            "status"
+                        ],
                         "display_order": submission.get(
                             "display_order"
                         )
@@ -747,7 +797,9 @@ def render_curator_dashboard():
                             "curator_notes"
                         )
                         or "",
-                        "caption": make_caption(submission),
+                        "caption": make_caption(
+                            submission
+                        ),
                     }
                 )
 
@@ -759,7 +811,9 @@ def render_curator_dashboard():
 
         df = pd.DataFrame(export_rows)
 
-        csv_bytes = df.to_csv(index=False).encode("utf-8")
+        csv_bytes = df.to_csv(
+            index=False
+        ).encode("utf-8")
 
         st.download_button(
             label="Download CSV for Google Sheets",
@@ -786,7 +840,10 @@ def render_curator_dashboard():
             """
         )
 
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(
+            df,
+            use_container_width=True,
+        )
 
 
 def main():
