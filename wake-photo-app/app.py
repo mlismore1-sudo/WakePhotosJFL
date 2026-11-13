@@ -16,7 +16,6 @@ from supabase import create_client
 
 
 register_heif_opener()
-
 st.set_page_config(
     page_title="In Loving Memory Of John Francis Lismore",
     layout="wide",
@@ -24,24 +23,22 @@ st.set_page_config(
 
 MAX_PHOTOS = 5
 MAX_FILE_MB = 25
-DRAFT_VERSION = 4
-IMAGE_TYPES = ["jpg", "jpeg", "png", "webp", "heic", "heif"]
+DRAFT_VERSION = 5
 CURRENT_YEAR = datetime.now().year
+IMAGE_TYPES = ["jpg", "jpeg", "png", "webp", "heic", "heif"]
 LOGGER = logging.getLogger(__name__)
 
 
 @st.cache_resource
 def get_public_client():
     return create_client(
-        st.secrets["SUPABASE_URL"],
-        st.secrets["SUPABASE_ANON_KEY"],
+        st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_ANON_KEY"]
     )
 
 
 def get_service_client():
     return create_client(
-        st.secrets["SUPABASE_URL"],
-        st.secrets["SUPABASE_SERVICE_ROLE_KEY"],
+        st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_SERVICE_ROLE_KEY"]
     )
 
 
@@ -72,10 +69,10 @@ def save_name():
     get_draft()["name"] = st.session_state.get("draft_name", "")
 
 
-def save_caption(photo_id, widget_key):
+def save_photo_field(photo_id, field, widget_key):
     for photo in get_draft()["photos"]:
         if photo["id"] == photo_id:
-            photo["caption"] = st.session_state.get(widget_key, "")
+            photo[field] = st.session_state.get(widget_key, "")
             break
 
 
@@ -109,8 +106,16 @@ def prepare_photo(photo):
     image = open_photo(photo)
     buffer = io.BytesIO()
     image.save(buffer, format="JPEG", quality=93, optimize=True)
-    name = os.path.splitext(safe_filename(photo["filename"]))[0] + ".jpg"
-    return buffer.getvalue(), name
+    filename = os.path.splitext(safe_filename(photo["filename"]))[0] + ".jpg"
+    return buffer.getvalue(), filename
+
+
+def valid_year(value):
+    text = str(value).strip()
+    return (
+        re.fullmatch(r"[0-9]{4}", text) is not None
+        and 1800 <= int(text) <= CURRENT_YEAR
+    )
 
 
 def ingest_uploads(files):
@@ -141,6 +146,7 @@ def ingest_uploads(files):
             "filename": uploaded.name,
             "bytes": data,
             "caption": "",
+            "year": "",
         })
         existing.add(digest)
     st.session_state["upload_messages"] = messages
@@ -156,6 +162,13 @@ def validation_errors():
         errors.append("Please add at least one photograph.")
     if len(draft["photos"]) > MAX_PHOTOS:
         errors.append(f"Please add no more than {MAX_PHOTOS} photographs.")
+    for position, photo in enumerate(draft["photos"], start=1):
+        year = str(photo.get("year", "")).strip()
+        if year and not valid_year(year):
+            errors.append(
+                f"Photograph {position}: enter a four-digit year between "
+                f"1800 and {CURRENT_YEAR}, or leave the year blank."
+            )
     return errors
 
 
@@ -180,9 +193,7 @@ def render_step_one():
     st.write("Let us know who is sharing these photographs.")
     st.session_state["draft_name"] = draft["name"]
     st.text_input(
-        "Your name",
-        key="draft_name",
-        on_change=save_name,
+        "Your name", key="draft_name", on_change=save_name,
         placeholder="For example: Sarah Smith",
     )
     if st.button("Continue to photographs", type="primary", use_container_width=True):
@@ -200,21 +211,36 @@ def render_photo_card(photo, position, total):
             st.image(open_photo(photo), use_container_width=True)
         with details_column:
             st.markdown(f"### Photograph {position + 1} of {total}")
-            key = f"edit_caption_{photo['id']}"
-            st.session_state[key] = photo["caption"]
+            caption_key = f"edit_caption_{photo['id']}"
+            year_key = f"edit_year_{photo['id']}"
+            st.session_state[caption_key] = photo["caption"]
+            st.session_state[year_key] = photo.get("year", "")
             st.text_area(
-                "Caption",
-                key=key,
-                on_change=save_caption,
-                args=(photo["id"], key),
+                "Caption", key=caption_key,
+                on_change=save_photo_field,
+                args=(photo["id"], "caption", caption_key),
                 placeholder="For example: John with family at Emma’s wedding",
                 height=110,
             )
+            st.text_input(
+                "Year (optional)", key=year_key,
+                on_change=save_photo_field,
+                args=(photo["id"], "year", year_key),
+                placeholder="For example: 1978", max_chars=4,
+                help=(
+                    "Enter a four-digit year. An approximate year is fine, "
+                    "or leave this blank if you are unsure."
+                ),
+            )
+            year = str(photo.get("year", "")).strip()
+            if year and not valid_year(year):
+                st.warning(
+                    f"Enter a four-digit year between 1800 and {CURRENT_YEAR}, "
+                    "or leave it blank."
+                )
             st.button(
-                "Delete",
-                key=f"delete_{photo['id']}",
-                on_click=delete_photo,
-                args=(photo["id"],),
+                "Delete", key=f"delete_{photo['id']}",
+                on_click=delete_photo, args=(photo["id"],),
             )
 
 
@@ -225,7 +251,6 @@ def submit_photos():
         for message in errors:
             st.error(message)
         return
-
     if "submission_snapshot" not in draft:
         draft["submission_snapshot"] = {
             "name": draft["name"].strip(),
@@ -234,7 +259,6 @@ def submit_photos():
     snapshot = draft["submission_snapshot"]
     photos = snapshot["photos"]
     progress = st.progress(0, text="Preparing your photographs…")
-
     try:
         client = get_public_client()
         bucket = client.storage.from_(st.secrets["SUPABASE_BUCKET"])
@@ -248,16 +272,13 @@ def submit_photos():
                     text=f"Uploading photograph {index + 1} of {len(photos)}…",
                 )
                 bucket.upload(
-                    path=path,
-                    file=data,
+                    path=path, file=data,
                     file_options={
                         "content-type": "image/jpeg",
-                        "cache-control": "3600",
-                        "upsert": "false",
+                        "cache-control": "3600", "upsert": "false",
                     },
                 )
                 draft["uploaded"][photo["id"]] = path
-
         progress.progress(85, text="Saving your photographs…")
         if not draft["parent_saved"]:
             client.table("submissions").insert(
@@ -269,7 +290,6 @@ def submit_photos():
                 returning="minimal",
             ).execute()
             draft["parent_saved"] = True
-
         if not draft["photos_saved"]:
             records = [
                 {
@@ -279,6 +299,10 @@ def submit_photos():
                     "original_filename": photo["filename"],
                     "photo_order": position,
                     "caption": photo["caption"].strip() or None,
+                    "photo_year": (
+                        int(str(photo.get("year", "")).strip())
+                        if str(photo.get("year", "")).strip() else None
+                    ),
                 }
                 for position, photo in enumerate(photos, start=1)
             ]
@@ -286,7 +310,6 @@ def submit_photos():
                 records, returning="minimal"
             ).execute()
             draft["photos_saved"] = True
-
         progress.progress(100, text="Your photographs have been received.")
         draft["complete"] = True
     except Exception:
@@ -306,10 +329,12 @@ def submit_photos():
 def render_step_two():
     draft = get_draft()
     st.subheader("Your photographs")
-    st.write("Choose up to five photographs and add a caption to each.")
+    st.write(
+        "Choose up to five photographs. Add a caption and, "
+        "if you know it, the year beside each photograph."
+    )
     uploaded = st.file_uploader(
-        "Choose photographs",
-        type=IMAGE_TYPES,
+        "Choose photographs", type=IMAGE_TYPES,
         accept_multiple_files=True,
         key=f"uploader_{st.session_state['upload_generation']}",
         help=f"Add up to {MAX_PHOTOS} photographs, each under {MAX_FILE_MB} MB.",
@@ -319,7 +344,6 @@ def render_step_two():
         st.rerun()
     for message in st.session_state.pop("upload_messages", []):
         st.warning(message)
-
     photos = draft["photos"]
     if photos:
         st.caption(f"{len(photos)} of {MAX_PHOTOS} photographs added.")
@@ -327,15 +351,12 @@ def render_step_two():
             render_photo_card(photo, position, len(photos))
     else:
         st.info("Choose at least one photograph to get started.")
-
     st.divider()
     back, share = st.columns(2)
     back.button("Back", on_click=go_back, use_container_width=True)
     if share.button(
-        "Share photographs",
-        type="primary",
-        disabled=not photos,
-        use_container_width=True,
+        "Share photographs", type="primary",
+        disabled=not photos, use_container_width=True,
     ):
         submit_photos()
 
@@ -350,10 +371,8 @@ def render_public_upload():
             "of photographs and memories of John."
         )
         st.button(
-            "Share more photographs",
-            type="primary",
-            on_click=start_again,
-            use_container_width=True,
+            "Share more photographs", type="primary",
+            on_click=start_again, use_container_width=True,
         )
         return
     if draft["upload_started"]:
@@ -426,15 +445,13 @@ def submission_year_label(submission):
     years = submission_years(submission)
     if not years:
         return str(submission.get("photo_year") or "Year not recorded")
-    if len(years) == 1:
-        return str(years[0])
-    return f"{years[0]}–{years[-1]}"
+    return str(years[0]) if len(years) == 1 else f"{years[0]}–{years[-1]}"
 
 
 def signed_image_url(client, photo):
-    response = client.storage.from_(
-        st.secrets["SUPABASE_BUCKET"]
-    ).create_signed_url(photo["storage_path"], 3600)
+    response = client.storage.from_(st.secrets["SUPABASE_BUCKET"]).create_signed_url(
+        photo["storage_path"], 3600
+    )
     return response.get("signedURL") or response.get("signedUrl")
 
 
@@ -470,7 +487,6 @@ def render_gallery(client, submissions):
                     st.caption(f"Year: {year}")
                 st.write(photo.get("caption") or "No caption added.")
         return
-
     st.subheader("Photo gallery")
     if not approved:
         st.info("No approved photographs are available yet.")
@@ -501,24 +517,14 @@ def render_gallery(client, submissions):
                 else:
                     st.warning("Preview unavailable.")
                 st.caption(f"Shared by {submission['submitter_name']}")
-                years = submission_years(submission)
-                if years:
+                if submission_years(submission):
                     st.caption(submission_year_label(submission))
                 if st.button(
-                    "View photographs",
-                    key=f"gallery_{submission['id']}",
+                    "View photographs", key=f"gallery_{submission['id']}",
                     use_container_width=True,
                 ):
                     st.session_state["selected_gallery_submission"] = submission["id"]
                     st.rerun()
-
-
-def valid_year(value):
-    text = str(value).strip()
-    return (
-        re.fullmatch(r"[0-9]{4}", text) is not None
-        and 1800 <= int(text) <= CURRENT_YEAR
-    )
 
 
 def render_review(client, submissions):
@@ -545,21 +551,18 @@ def render_review(client, submissions):
                         show_stored_image(client, photo)
                     with details_column:
                         caption = st.text_area(
-                            "Caption",
-                            value=photo.get("caption") or "",
+                            "Caption", value=photo.get("caption") or "",
                             key=f"review_caption_{photo['id']}",
                         )
                         year = st.text_input(
-                            "Year (optional, curator only)",
+                            "Year (optional)",
                             value=str(photo_year(photo, submission) or ""),
-                            key=f"review_year_{photo['id']}",
-                            max_chars=4,
+                            key=f"review_year_{photo['id']}", max_chars=4,
                         )
                     updates.append((photo["id"], caption, year))
                 current_status = submission.get("status", "pending")
                 status = st.selectbox(
-                    "Submission status",
-                    statuses,
+                    "Submission status", statuses,
                     index=statuses.index(current_status) if current_status in statuses else 0,
                     key=f"review_status_{submission['id']}",
                 )
@@ -607,8 +610,7 @@ def render_export(submissions):
     st.download_button(
         "Download CSV for Google Sheets",
         data=frame.to_csv(index=False).encode("utf-8-sig"),
-        file_name="wake_photo_submissions.csv",
-        mime="text/csv",
+        file_name="wake_photo_submissions.csv", mime="text/csv",
         use_container_width=True,
     )
     st.dataframe(frame, use_container_width=True)
@@ -624,10 +626,8 @@ def render_curator_dashboard():
         st.error("Could not load photographs. Please try again.")
         return
     area = st.radio(
-        "Dashboard view",
-        ["Timeline", "Gallery", "Review and edit", "Export"],
-        horizontal=True,
-        key="curator_view",
+        "Dashboard view", ["Timeline", "Gallery", "Review and edit", "Export"],
+        horizontal=True, key="curator_view",
     )
     if area == "Timeline":
         if not submissions:
