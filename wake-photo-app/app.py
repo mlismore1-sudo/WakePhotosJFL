@@ -1,8 +1,6 @@
-import io
 import os
 import uuid
-from datetime import datetime
-from urllib.parse import quote
+from datetime import date, datetime
 
 import pandas as pd
 import streamlit as st
@@ -15,6 +13,7 @@ st.set_page_config(
 )
 
 ALLOWED_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+MAX_PHOTOS = 5
 MAX_FILE_MB = 25
 
 
@@ -35,29 +34,48 @@ def get_service_client() -> Client:
 
 def safe_filename(filename: str) -> str:
     base = os.path.basename(filename)
-    return "".join(
+    cleaned = "".join(
         char if char.isalnum() or char in {"-", "_", "."} else "_"
         for char in base
-    ).lower() or "photo.jpg"
+    ).lower()
+    return cleaned or "photo.jpg"
 
 
-def make_caption(row) -> str:
-    people = row.get("people_in_photo") or ""
-    date_taken = row.get("date_taken") or ""
-    location = row.get("location") or ""
+def format_date(value):
+    if not value:
+        return ""
+    if isinstance(value, str):
+        return value
+    return value.strftime("%d %B %Y")
 
-    parts = [part for part in [date_taken, location] if part]
-    context = " — ".join(parts)
 
-    caption = people
+def make_caption(submission, photo=None):
+    date_text = (
+        format_date(submission.get("exact_date"))
+        if submission.get("date_type") == "exact"
+        else submission.get("estimated_date") or ""
+    )
+
+    location = submission.get("location") or ""
+    postcode = submission.get("postcode") or ""
+
+    location_text = location
+    if postcode:
+        location_text = f"{location_text}, {postcode}".strip(", ")
+
+    context_parts = [part for part in [date_text, location_text] if part]
+    context = " — ".join(context_parts)
+
+    caption = submission.get("people_in_photo") or ""
+
     if context:
         caption += f"\n{context}"
 
-    memory = row.get("memory")
+    memory = submission.get("memory")
     if memory:
         caption += f'\n“{memory}”'
 
-    submitter = row.get("submitter_name")
+    submitter = submission.get("submitter_name")
     if submitter:
         caption += f"\nShared by {submitter}"
 
@@ -68,19 +86,42 @@ def render_public_upload():
     st.title("📷 Photos and Memories")
     st.markdown(
         """
-        Thank you for sharing a photo or memory.
+        Thank you for sharing photographs and memories.
 
-        Please upload photographs from any part of Dad’s life — family occasions,
+        Please add photos from any part of Dad’s life — family occasions,
         holidays, work, friendships, sport, everyday moments, or photos we may
         never have seen.
 
+        You can upload **up to five photos** for each memory or occasion.
         Approximate dates and partial information are completely fine.
-        Please upload **one photo per submission** where possible, so each photo
-        can be correctly labelled.
         """
     )
 
-    with st.form("photo_submission", clear_on_submit=True):
+    if "submission_complete" not in st.session_state:
+        st.session_state.submission_complete = False
+
+    if st.session_state.submission_complete:
+        st.success(
+            "Thank you — your photos and memory have been received."
+        )
+
+        another = st.radio(
+            "Would you like to submit photos about another memory?",
+            options=["No", "Yes"],
+            index=0,
+        )
+
+        if another == "Yes":
+            st.session_state.submission_complete = False
+            st.rerun()
+        else:
+            st.info(
+                "Thank you again for helping to create this collection of "
+                "photos and memories."
+            )
+        return
+
+    with st.form("memory_submission", clear_on_submit=True):
         st.subheader("About you")
 
         submitter_name = st.text_input(
@@ -90,61 +131,88 @@ def render_public_upload():
 
         submitter_relationship = st.text_input(
             "Your relationship to Dad",
-            placeholder="For example: daughter, friend, colleague",
+            placeholder="For example: daughter, son, friend, colleague",
         )
 
-        submitter_contact = st.text_input(
-            "Your phone number or email address",
-            help="Optional. Useful only if we need to check a detail.",
-        )
-
-        st.subheader("About the photo")
+        st.subheader("About this memory")
 
         people_in_photo = st.text_area(
-            "Who is in the photo? *",
+            "Who is in the photo, and what was the occasion? *",
             placeholder=(
                 "For example: Dad with Mum, Sarah and James at Christmas 1998."
             ),
-            height=100,
+            height=110,
         )
 
-        date_taken = st.text_input(
-            "When was the photo taken?",
-            placeholder="For example: about 1998, the 1980s, summer 2004",
+        date_type = st.radio(
+            "Do you know the exact date the photo was taken?",
+            options=["No — I can give an approximate date", "Yes — I know the exact date"],
+            index=0,
+            horizontal=True,
         )
 
-        location = st.text_input(
-            "Where was it taken?",
-            placeholder="For example: home, Cornwall, wedding venue",
-        )
+        exact_date = None
+        estimated_date = ""
+
+        if date_type == "Yes — I know the exact date":
+            exact_date = st.date_input(
+                "Exact date",
+                value=None,
+                min_value=date(1900, 1, 1),
+                max_value=date.today(),
+                format="DD/MM/YYYY",
+            )
+        else:
+            estimated_date = st.text_input(
+                "Approximate date or period",
+                placeholder="For example: about 1998, the 1980s, summer 2004",
+            )
+
+        col_location, col_postcode = st.columns(2)
+
+        with col_location:
+            location = st.text_input(
+                "Where was it taken?",
+                placeholder="For example: home, Cornwall, wedding venue",
+            )
+
+        with col_postcode:
+            postcode = st.text_input(
+                "Postcode or ZIP code",
+                help="Optional. This can help us map the photos later.",
+                placeholder="For example: BR6 or SW1A 1AA",
+            )
 
         memory = st.text_area(
-            "Is there a memory or story connected to this photo?",
+            "Memory or story",
             placeholder=(
                 "Please share anything you remember — a funny moment, what Dad "
                 "was like, why the photo matters, or a message you would like included."
             ),
-            height=140,
+            height=150,
         )
 
-        display_permission = st.radio(
-            "Are you happy for this photo and information to be displayed at Dad’s wake?",
-            options=["Yes", "Yes, but please contact me first", "No — please keep it private"],
-            index=0,
-        )
+        st.subheader("Upload photos")
 
-        st.subheader("Upload your photo")
-
-        uploaded_file = st.file_uploader(
-            "Choose a photo *",
+        uploaded_files = st.file_uploader(
+            f"Choose up to {MAX_PHOTOS} photos *",
             type=["jpg", "jpeg", "png", "webp"],
-            accept_multiple_files=False,
+            accept_multiple_files=True,
         )
 
-        if uploaded_file is not None:
-            st.image(uploaded_file, caption="Preview", use_container_width=True)
+        if uploaded_files:
+            st.info(f"{len(uploaded_files)} photo(s) selected.")
 
-        submitted = st.form_submit_button("Submit photo", use_container_width=True)
+            preview_columns = st.columns(min(len(uploaded_files), 3))
+
+            for index, uploaded_file in enumerate(uploaded_files[:6]):
+                with preview_columns[index % 3]:
+                    st.image(uploaded_file, use_container_width=True)
+
+        submitted = st.form_submit_button(
+            "Submit photos and memory",
+            use_container_width=True,
+        )
 
     if not submitted:
         return
@@ -153,16 +221,31 @@ def render_public_upload():
 
     if not submitter_name.strip():
         errors.append("Please enter your name.")
-    if not people_in_photo.strip():
-        errors.append("Please say who is in the photo.")
-    if uploaded_file is None:
-        errors.append("Please choose a photo to upload.")
 
-    if uploaded_file is not None:
-        if uploaded_file.type not in ALLOWED_TYPES:
-            errors.append("Please upload a JPG, JPEG, PNG or WEBP image.")
-        if uploaded_file.size > MAX_FILE_MB * 1024 * 1024:
-            errors.append(f"Please upload an image smaller than {MAX_FILE_MB} MB.")
+    if not people_in_photo.strip():
+        errors.append("Please say who is in the photo or what the occasion was.")
+
+    if not uploaded_files:
+        errors.append("Please choose at least one photo.")
+
+    if uploaded_files and len(uploaded_files) > MAX_PHOTOS:
+        errors.append(f"Please upload no more than {MAX_PHOTOS} photos per memory.")
+
+    if date_type == "Yes — I know the exact date" and exact_date is None:
+        errors.append("Please choose the exact date, or switch to an approximate date.")
+
+    if uploaded_files:
+        for uploaded_file in uploaded_files:
+            if uploaded_file.type not in ALLOWED_TYPES:
+                errors.append(
+                    f"{uploaded_file.name} is not a supported image type. "
+                    "Please use JPG, JPEG, PNG or WEBP."
+                )
+
+            if uploaded_file.size > MAX_FILE_MB * 1024 * 1024:
+                errors.append(
+                    f"{uploaded_file.name} is larger than {MAX_FILE_MB} MB."
+                )
 
     if errors:
         for error in errors:
@@ -170,48 +253,60 @@ def render_public_upload():
         return
 
     submission_id = str(uuid.uuid4())
-    filename = safe_filename(uploaded_file.name)
-    storage_path = f"pending/{submission_id}/{filename}"
-
     public_client = get_public_client()
+    bucket = st.secrets["SUPABASE_BUCKET"]
+
+    submission_record = {
+        "id": submission_id,
+        "submitter_name": submitter_name.strip(),
+        "submitter_relationship": submitter_relationship.strip() or None,
+        "people_in_photo": people_in_photo.strip(),
+        "date_type": "exact" if date_type == "Yes — I know the exact date" else "estimated",
+        "exact_date": exact_date.isoformat() if exact_date else None,
+        "estimated_date": estimated_date.strip() or None,
+        "location": location.strip() or None,
+        "postcode": postcode.strip() or None,
+        "memory": memory.strip() or None,
+        "status": "pending",
+    }
+
+    uploaded_photo_records = []
 
     try:
-        with st.spinner("Uploading photo..."):
-            public_client.storage.from_(st.secrets["SUPABASE_BUCKET"]).upload(
-                file=uploaded_file.getvalue(),
-                path=storage_path,
-                file_options={
-                    "content-type": uploaded_file.type,
-                    "cache-control": "3600",
-                    "upsert": "false",
-                },
-            )
+        with st.spinner("Uploading photos..."):
+            for photo_order, uploaded_file in enumerate(uploaded_files, start=1):
+                filename = safe_filename(uploaded_file.name)
+                storage_path = f"pending/{submission_id}/{filename}"
 
-        record = {
-            "id": submission_id,
-            "submitter_name": submitter_name.strip(),
-            "submitter_relationship": submitter_relationship.strip() or None,
-            "submitter_contact": submitter_contact.strip() or None,
-            "people_in_photo": people_in_photo.strip(),
-            "date_taken": date_taken.strip() or None,
-            "location": location.strip() or None,
-            "memory": memory.strip() or None,
-            "display_permission": display_permission,
-            "photo_path": storage_path,
-            "status": "pending",
-        }
+                public_client.storage.from_(bucket).upload(
+                    file=uploaded_file.getvalue(),
+                    path=storage_path,
+                    file_options={
+                        "content-type": uploaded_file.type,
+                        "cache-control": "3600",
+                        "upsert": "false",
+                    },
+                )
 
-        public_client.table("photo_submissions").insert(record).execute()
+                uploaded_photo_records.append(
+                    {
+                        "submission_id": submission_id,
+                        "storage_path": storage_path,
+                        "original_filename": uploaded_file.name,
+                        "photo_order": photo_order,
+                    }
+                )
 
-        st.success(
-            "Thank you — your photo has been received. "
-            "If you have more photos, please submit them separately."
-        )
+        public_client.table("submissions").insert(submission_record).execute()
+        public_client.table("submission_photos").insert(uploaded_photo_records).execute()
+
+        st.session_state.submission_complete = True
+        st.rerun()
 
     except Exception as error:
         st.error(
             "Sorry, we could not save your submission. "
-            "Please try again, or email the photo to the family."
+            "Please try again, or email the photos to the family."
         )
         st.exception(error)
 
@@ -232,166 +327,325 @@ def curator_login() -> bool:
     return True
 
 
-def render_curator_dashboard():
-    st.title("📋 Photo submissions")
-
+def load_curator_data():
     service_client = get_service_client()
-    bucket = st.secrets["SUPABASE_BUCKET"]
 
-    response = (
-        service_client.table("photo_submissions")
+    submissions_response = (
+        service_client.table("submissions")
         .select("*")
         .order("created_at", desc=True)
         .execute()
     )
 
-    submissions = response.data or []
-
-    if not submissions:
-        st.info("No submissions yet.")
-        return
-
-    status_filter = st.selectbox(
-        "Filter by status",
-        options=["All", "pending", "approved", "private", "rejected"],
-        index=0,
+    photos_response = (
+        service_client.table("submission_photos")
+        .select("*")
+        .order("photo_order", desc=False)
+        .execute()
     )
 
-    if status_filter != "All":
-        submissions = [
-            row for row in submissions if row["status"] == status_filter
-        ]
+    submissions = submissions_response.data or []
+    photos = photos_response.data or []
 
-    st.markdown(f"### {len(submissions)} submission(s)")
+    photos_by_submission = {}
 
-    for index, row in enumerate(submissions):
+    for photo in photos:
+        photos_by_submission.setdefault(photo["submission_id"], []).append(photo)
+
+    for submission in submissions:
+        submission["photos"] = photos_by_submission.get(submission["id"], [])
+
+    return service_client, submissions
+
+
+def render_timeline(submissions):
+    st.subheader("Upload timeline")
+
+    if not submissions:
+        st.info("No submissions have been received yet.")
+        return
+
+    submissions_by_day = {}
+
+    for submission in submissions:
+        submitted_at = submission["created_at"][:10]
+        submissions_by_day.setdefault(submitted_at, []).append(submission)
+
+    for day in sorted(submissions_by_day.keys(), reverse=True):
+        day_submissions = submissions_by_day[day]
+
         with st.container(border=True):
-            col_photo, col_details = st.columns([1, 2])
+            st.markdown(f"### {datetime.strptime(day, '%Y-%m-%d').strftime('%d %B %Y')}")
+            st.markdown(f"**{len(day_submissions)} submission(s)**")
 
-            with col_photo:
-                try:
-                    signed = service_client.storage.from_(bucket).create_signed_url(
-                        row["photo_path"],
-                        60 * 60,
+            for submission in day_submissions:
+                photo_count = len(submission.get("photos", []))
+
+                with st.expander(
+                    f"{submission['submitter_name']} — {photo_count} photo(s) — "
+                    f"{submission['status'].title()}"
+                ):
+                    st.markdown(f"**Submitted at:** {submission['created_at']}")
+                    st.markdown(f"**Shared by:** {submission['submitter_name']}")
+
+                    if submission.get("submitter_relationship"):
+                        st.markdown(
+                            f"**Relationship:** {submission['submitter_relationship']}"
+                        )
+
+                    st.markdown(
+                        f"**People / occasion:** {submission['people_in_photo']}"
                     )
-                    image_url = signed.get("signedURL") or signed.get("signedUrl")
 
-                    if image_url:
-                        st.image(image_url, use_container_width=True)
+                    if submission["date_type"] == "exact":
+                        st.markdown(
+                            f"**Exact date:** {format_date(submission.get('exact_date'))}"
+                        )
                     else:
-                        st.warning("Could not create a photo preview.")
-                except Exception:
-                    st.warning("Photo preview unavailable.")
+                        st.markdown(
+                            f"**Approximate date:** {submission.get('estimated_date') or 'Not provided'}"
+                        )
 
-                st.download_button(
-                    label="Download photo",
-                    data=service_client.storage.from_(bucket).download(row["photo_path"]),
-                    file_name=os.path.basename(row["photo_path"]),
-                    mime="application/octet-stream",
-                    key=f"download-{row['id']}",
-                )
+                    if submission.get("location"):
+                        st.markdown(f"**Location:** {submission['location']}")
 
-            with col_details:
-                st.markdown(f"**Submitted by:** {row['submitter_name']}")
-                if row.get("submitter_relationship"):
-                    st.markdown(f"**Relationship:** {row['submitter_relationship']}")
-                if row.get("submitter_contact"):
-                    st.markdown(f"**Contact:** {row['submitter_contact']}")
+                    if submission.get("postcode"):
+                        st.markdown(f"**Postcode / ZIP:** {submission['postcode']}")
 
-                st.markdown(f"**People in photo:** {row['people_in_photo']}")
-                if row.get("date_taken"):
-                    st.markdown(f"**When taken:** {row['date_taken']}")
-                if row.get("location"):
-                    st.markdown(f"**Where taken:** {row['location']}")
-                if row.get("memory"):
-                    st.markdown(f"**Memory:** {row['memory']}")
+                    if submission.get("memory"):
+                        st.markdown(f"**Memory:** {submission['memory']}")
 
-                st.markdown(f"**Display permission:** {row['display_permission']}")
-                st.markdown(f"**Current status:** `{row['status']}`")
-                st.markdown(f"**Submitted:** {row['created_at']}")
+                    st.markdown(f"**Photos:** {photo_count}")
+
+
+def render_curator_dashboard():
+    st.title("📋 Photo submissions")
+
+    service_client, submissions = load_curator_data()
+    bucket = st.secrets["SUPABASE_BUCKET"]
+
+    tab_timeline, tab_review, tab_export = st.tabs(
+        ["Timeline", "Review and edit", "Export"]
+    )
+
+    with tab_timeline:
+        render_timeline(submissions)
+
+    with tab_review:
+        status_filter = st.selectbox(
+            "Filter by status",
+            options=["All", "pending", "approved", "private", "rejected"],
+            index=0,
+        )
+
+        filtered = submissions
+
+        if status_filter != "All":
+            filtered = [
+                submission
+                for submission in submissions
+                if submission["status"] == status_filter
+            ]
+
+        st.markdown(f"### {len(filtered)} submission(s)")
+
+        if not filtered:
+            st.info("No submissions match this filter.")
+
+        for submission in filtered:
+            with st.container(border=True):
+                st.markdown(f"#### Shared by {submission['submitter_name']}")
+                st.markdown(f"**Submitted:** {submission['created_at']}")
+                st.markdown(f"**People / occasion:** {submission['people_in_photo']}")
+
+                if submission["date_type"] == "exact":
+                    st.markdown(
+                        f"**Exact date:** {format_date(submission.get('exact_date'))}"
+                    )
+                else:
+                    st.markdown(
+                        f"**Approximate date:** {submission.get('estimated_date') or 'Not provided'}"
+                    )
+
+                if submission.get("location"):
+                    st.markdown(f"**Location:** {submission['location']}")
+
+                if submission.get("postcode"):
+                    st.markdown(f"**Postcode / ZIP:** {submission['postcode']}")
+
+                if submission.get("memory"):
+                    st.markdown(f"**Memory:** {submission['memory']}")
+
+                st.markdown(f"**Current status:** `{submission['status']}`")
+
+                photos = submission.get("photos", [])
+
+                if photos:
+                    photo_columns = st.columns(min(len(photos), 3))
+
+                    for index, photo in enumerate(photos):
+                        with photo_columns[index % 3]:
+                            try:
+                                signed = service_client.storage.from_(
+                                    bucket
+                                ).create_signed_url(
+                                    photo["storage_path"],
+                                    60 * 60,
+                                )
+
+                                image_url = signed.get("signedURL") or signed.get(
+                                    "signedUrl"
+                                )
+
+                                if image_url:
+                                    st.image(image_url, use_container_width=True)
+                                else:
+                                    st.warning("Preview unavailable.")
+                            except Exception:
+                                st.warning("Preview unavailable.")
+
+                            st.caption(
+                                f"Photo {photo['photo_order']}: "
+                                f"{photo['original_filename']}"
+                            )
 
                 new_status = st.selectbox(
-                    "Set status",
+                    "Set submission status",
                     options=["pending", "approved", "private", "rejected"],
-                    index=["pending", "approved", "private", "rejected"].index(row["status"]),
-                    key=f"status-{row['id']}",
+                    index=[
+                        "pending",
+                        "approved",
+                        "private",
+                        "rejected",
+                    ].index(submission["status"]),
+                    key=f"status-{submission['id']}",
                 )
 
                 display_order = st.number_input(
                     "Display order",
                     min_value=0,
-                    value=row.get("display_order") or 0,
-                    key=f"order-{row['id']}",
+                    value=submission.get("display_order") or 0,
+                    key=f"order-{submission['id']}",
                 )
 
                 curator_notes = st.text_area(
                     "Curator notes",
-                    value=row.get("curator_notes") or "",
-                    height=80,
-                    key=f"notes-{row['id']}",
+                    value=submission.get("curator_notes") or "",
+                    height=90,
+                    key=f"notes-{submission['id']}",
                 )
 
-                if st.button("Save changes", key=f"save-{row['id']}"):
-                    service_client.table("photo_submissions").update(
+                if st.button(
+                    "Save changes",
+                    key=f"save-{submission['id']}",
+                ):
+                    service_client.table("submissions").update(
                         {
                             "status": new_status,
                             "display_order": int(display_order),
                             "curator_notes": curator_notes,
                         }
-                    ).eq("id", row["id"]).execute()
+                    ).eq("id", submission["id"]).execute()
+
                     st.success("Saved.")
                     st.rerun()
 
                 st.markdown("#### Suggested wake caption")
-                st.code(make_caption(row), language="text")
+                st.code(make_caption(submission), language="text")
 
+    with tab_export:
+        st.subheader("Export for Google Sheets")
 
-def export_approved_photos():
-    service_client = get_service_client()
+        export_rows = []
 
-    response = (
-        service_client.table("photo_submissions")
-        .select("*")
-        .eq("status", "approved")
-        .order("display_order", desc=False)
-        .execute()
-    )
+        for submission in submissions:
+            photos = submission.get("photos", [])
 
-    rows = response.data or []
+            if not photos:
+                export_rows.append(
+                    {
+                        "submission_created_at": submission["created_at"],
+                        "submitter_name": submission["submitter_name"],
+                        "submitter_relationship": submission.get(
+                            "submitter_relationship"
+                        )
+                        or "",
+                        "people_in_photo": submission["people_in_photo"],
+                        "date_type": submission["date_type"],
+                        "exact_date": format_date(submission.get("exact_date")),
+                        "estimated_date": submission.get("estimated_date") or "",
+                        "location": submission.get("location") or "",
+                        "postcode": submission.get("postcode") or "",
+                        "memory": submission.get("memory") or "",
+                        "photo_filename": "",
+                        "photo_storage_path": "",
+                        "photo_order": "",
+                        "submission_status": submission["status"],
+                        "display_order": submission.get("display_order") or 0,
+                        "curator_notes": submission.get("curator_notes") or "",
+                        "caption": make_caption(submission),
+                    }
+                )
 
-    if not rows:
-        st.info("No approved photos to export yet.")
-        return
+            for photo in photos:
+                export_rows.append(
+                    {
+                        "submission_created_at": submission["created_at"],
+                        "submitter_name": submission["submitter_name"],
+                        "submitter_relationship": submission.get(
+                            "submitter_relationship"
+                        )
+                        or "",
+                        "people_in_photo": submission["people_in_photo"],
+                        "date_type": submission["date_type"],
+                        "exact_date": format_date(submission.get("exact_date")),
+                        "estimated_date": submission.get("estimated_date") or "",
+                        "location": submission.get("location") or "",
+                        "postcode": submission.get("postcode") or "",
+                        "memory": submission.get("memory") or "",
+                        "photo_filename": photo["original_filename"],
+                        "photo_storage_path": photo["storage_path"],
+                        "photo_order": photo["photo_order"],
+                        "submission_status": submission["status"],
+                        "display_order": submission.get("display_order") or 0,
+                        "curator_notes": submission.get("curator_notes") or "",
+                        "caption": make_caption(submission),
+                    }
+                )
 
-    export_rows = []
+        if not export_rows:
+            st.info("No submissions available to export yet.")
+            return
 
-    for row in rows:
-        export_rows.append(
-            {
-                "display_order": row.get("display_order") or 0,
-                "photo_path": row["photo_path"],
-                "photo_url": row.get("photo_url") or "",
-                "submitter_name": row["submitter_name"],
-                "people_in_photo": row["people_in_photo"],
-                "date_taken": row.get("date_taken") or "",
-                "location": row.get("location") or "",
-                "memory": row.get("memory") or "",
-                "caption": make_caption(row),
-            }
+        df = pd.DataFrame(export_rows)
+
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        st.download_button(
+            label="Download CSV for Google Sheets",
+            data=csv_bytes,
+            file_name="wake_photo_submissions.csv",
+            mime="text/csv",
+            use_container_width=True,
         )
 
-    df = pd.DataFrame(export_rows)
+        st.markdown(
+            """
+            ### Import into Google Sheets
 
-    csv_bytes = df.to_csv(index=False).encode("utf-8")
+            1. Download the CSV file.
+            2. Open a new Google Sheet.
+            3. Choose **File → Import**.
+            4. Select **Upload** and choose the downloaded CSV file.
+            5. Choose **Replace spreadsheet** or **Insert new sheet(s)**.
+            6. Click **Import data**.
 
-    st.download_button(
-        label="Download approved captions CSV",
-        data=csv_bytes,
-        file_name="wake_photo_captions.csv",
-        mime="text/csv",
-    )
+            Each row represents one photo. If a memory has five photos, it will
+            appear across five rows, with the shared memory details repeated.
+            """
+        )
 
-    st.dataframe(df, use_container_width=True)
+        st.dataframe(df, use_container_width=True)
 
 
 def main():
@@ -405,9 +659,6 @@ def main():
     else:
         if curator_login():
             render_curator_dashboard()
-
-            st.divider()
-            export_approved_photos()
 
 
 if __name__ == "__main__":
