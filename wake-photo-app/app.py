@@ -56,22 +56,39 @@ def safe_filename(filename: str) -> str:
     return cleaned or "photo.jpg"
 
 
-def convert_to_jpeg(uploaded_file):
-    """Convert HEIC or HEIF images to JPEG before uploading to Supabase."""
+def prepare_image_for_upload(
+    uploaded_file,
+    rotation_degrees,
+):
+    """Return image bytes for upload, applying rotation and HEIC conversion."""
 
+    file_bytes = uploaded_file.getvalue()
     filename = uploaded_file.name.lower()
 
-    if not filename.endswith((".heic", ".heif")):
+    if (
+        rotation_degrees == 0
+        and not filename.endswith(
+            (".heic", ".heif")
+        )
+    ):
         return (
-            uploaded_file.getvalue(),
+            file_bytes,
             uploaded_file.type,
             uploaded_file.name,
         )
 
-    image = Image.open(uploaded_file)
+    image = Image.open(
+        io.BytesIO(file_bytes)
+    )
 
     if image.mode not in {"RGB", "L"}:
         image = image.convert("RGB")
+
+    if rotation_degrees:
+        image = image.rotate(
+            rotation_degrees,
+            expand=True,
+        )
 
     jpeg_buffer = io.BytesIO()
 
@@ -83,7 +100,8 @@ def convert_to_jpeg(uploaded_file):
     )
 
     jpeg_filename = (
-        os.path.splitext(uploaded_file.name)[0] + ".jpg"
+        os.path.splitext(uploaded_file.name)[0]
+        + ".jpg"
     )
 
     return (
@@ -91,6 +109,26 @@ def convert_to_jpeg(uploaded_file):
         "image/jpeg",
         jpeg_filename,
     )
+
+
+def get_rotated_preview(
+    uploaded_file,
+    rotation_degrees,
+):
+    """Return a rotated preview image for display in Streamlit."""
+
+    image = Image.open(uploaded_file)
+
+    if image.mode not in {"RGB", "L"}:
+        image = image.convert("RGB")
+
+    if rotation_degrees:
+        image = image.rotate(
+            rotation_degrees,
+            expand=True,
+        )
+
+    return image
 
 
 def render_public_upload():
@@ -129,6 +167,9 @@ def render_public_upload():
 
         Add a short caption for each photograph and tell us the year it was
         taken. Approximate years are welcome.
+
+        If a photograph appears sideways, use **Rotate 90° left** until it
+        looks the right way up.
         """
     )
 
@@ -235,9 +276,27 @@ def render_public_upload():
 
             st.session_state.apply_caption_to_all = False
 
+        if "photo_rotations" not in st.session_state:
+            st.session_state.photo_rotations = {}
+
         for index, uploaded_file in enumerate(
             uploaded_files
         ):
+            rotation_key = (
+                f"rotation-{index}-{uploaded_file.name}"
+            )
+
+            if rotation_key not in st.session_state.photo_rotations:
+                st.session_state.photo_rotations[
+                    rotation_key
+                ] = 0
+
+            rotation_degrees = (
+                st.session_state.photo_rotations[
+                    rotation_key
+                ]
+            )
+
             with st.container(border=True):
                 preview_columns = st.columns(
                     [1, 2]
@@ -245,8 +304,15 @@ def render_public_upload():
 
                 with preview_columns[0]:
                     try:
+                        rotated_preview = (
+                            get_rotated_preview(
+                                uploaded_file,
+                                rotation_degrees,
+                            )
+                        )
+
                         st.image(
-                            uploaded_file,
+                            rotated_preview,
                             use_container_width=True,
                         )
                     except Exception:
@@ -261,6 +327,23 @@ def render_public_upload():
 
                     st.caption(
                         uploaded_file.name
+                    )
+
+                    if st.button(
+                        "Rotate 90° left",
+                        key=f"rotate-{rotation_key}",
+                        use_container_width=True,
+                    ):
+                        st.session_state.photo_rotations[
+                            rotation_key
+                        ] = (
+                            rotation_degrees + 90
+                        ) % 360
+
+                        st.rerun()
+
+                    st.caption(
+                        "Use this if the photograph is sideways."
                     )
 
                     st.text_input(
@@ -356,11 +439,26 @@ def render_public_upload():
                     uploaded_files,
                     start=1,
                 ):
+                    rotation_key = (
+                        f"rotation-{photo_order - 1}-"
+                        f"{uploaded_file.name}"
+                    )
+
+                    rotation_degrees = (
+                        st.session_state.photo_rotations.get(
+                            rotation_key,
+                            0,
+                        )
+                    )
+
                     (
                         file_bytes,
                         content_type,
                         original_filename,
-                    ) = convert_to_jpeg(uploaded_file)
+                    ) = prepare_image_for_upload(
+                        uploaded_file,
+                        rotation_degrees,
+                    )
 
                     filename = safe_filename(
                         original_filename
