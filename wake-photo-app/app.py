@@ -32,15 +32,13 @@ LOGGER = logging.getLogger(__name__)
 @st.cache_resource
 def get_public_client():
     return create_client(
-        st.secrets["SUPABASE_URL"],
-        st.secrets["SUPABASE_ANON_KEY"],
+        st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_ANON_KEY"]
     )
 
 
 def get_service_client():
     return create_client(
-        st.secrets["SUPABASE_URL"],
-        st.secrets["SUPABASE_SERVICE_ROLE_KEY"],
+        st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_SERVICE_ROLE_KEY"]
     )
 
 
@@ -79,9 +77,7 @@ def save_photo_field(photo_id, field, widget_key):
 
 def delete_photo(photo_id):
     draft = get_draft()
-    draft["photos"] = [
-        photo for photo in draft["photos"] if photo["id"] != photo_id
-    ]
+    draft["photos"] = [p for p in draft["photos"] if p["id"] != photo_id]
 
 
 def start_again():
@@ -117,9 +113,47 @@ def valid_year(value):
     )
 
 
+def metadata_photo_year(photo):
+    """Read EXIF DateTimeOriginal, never upload or modification time."""
+    try:
+        with Image.open(io.BytesIO(photo["bytes"])) as image:
+            exif = image.getexif()
+            if not exif:
+                return None
+            try:
+                details = exif.get_ifd(0x8769)
+            except Exception:
+                details = {}
+            raw_date = details.get(0x9003) or exif.get(0x9003)
+        if not raw_date:
+            return None
+        if isinstance(raw_date, bytes):
+            raw_date = raw_date.decode("utf-8", errors="ignore")
+        date_text = str(raw_date).replace("\x00", "").strip()
+        captured_at = datetime.strptime(date_text, "%Y:%m:%d %H:%M:%S")
+        year = str(captured_at.year)
+        return int(year) if valid_year(year) else None
+    except Exception:
+        return None
+
+
+def detected_photo_year(photo):
+    # Older in-session drafts may not yet have the cached metadata value.
+    if "metadata_year" not in photo:
+        photo["metadata_year"] = metadata_photo_year(photo)
+    return photo["metadata_year"]
+
+
+def resolved_photo_year(photo):
+    entered = str(photo.get("year", "")).strip()
+    if entered:
+        return int(entered) if valid_year(entered) else None
+    return detected_photo_year(photo)
+
+
 def ingest_uploads(files):
     draft = get_draft()
-    existing = {photo["digest"] for photo in draft["photos"]}
+    existing = {p["digest"] for p in draft["photos"]}
     messages = []
     for uploaded in files:
         data = uploaded.getvalue()
@@ -128,14 +162,10 @@ def ingest_uploads(files):
             messages.append(f"{uploaded.name}: this photograph is already added.")
             continue
         if len(draft["photos"]) >= MAX_PHOTOS:
-            messages.append(
-                f"{uploaded.name}: you can add up to {MAX_PHOTOS} photographs."
-            )
+            messages.append(f"{uploaded.name}: you can add up to {MAX_PHOTOS} photographs.")
             continue
         if len(data) > MAX_FILE_MB * 1024 * 1024:
-            messages.append(
-                f"{uploaded.name}: please choose a file under {MAX_FILE_MB} MB."
-            )
+            messages.append(f"{uploaded.name}: please choose a file under {MAX_FILE_MB} MB.")
             continue
         try:
             with Image.open(io.BytesIO(data)) as image:
@@ -143,14 +173,16 @@ def ingest_uploads(files):
         except Exception:
             messages.append(f"{uploaded.name}: this photograph could not be opened.")
             continue
-        draft["photos"].append({
+        photo = {
             "id": str(uuid.uuid4()),
             "digest": digest,
             "filename": uploaded.name,
             "bytes": data,
             "caption": "",
             "year": "",
-        })
+        }
+        photo["metadata_year"] = metadata_photo_year(photo)
+        draft["photos"].append(photo)
         existing.add(digest)
     st.session_state["upload_messages"] = messages
     st.session_state["upload_generation"] += 1
@@ -185,8 +217,7 @@ def render_header():
             </h1>
             <p style="margin:0;">Sharing photographs and memories</p>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """, unsafe_allow_html=True,
     )
 
 
@@ -214,8 +245,8 @@ def render_photo_card(photo, position, total):
                 args=(photo["id"], "year", year_key),
                 placeholder="For example: 1978", max_chars=4,
                 help=(
-                    "Enter a four-digit year. An approximate year is fine, "
-                    "or leave this blank if you are unsure."
+                    "An entered year takes priority. If left blank, the original "
+                    "capture year in the photograph’s metadata is used when available."
                 ),
             )
             year = str(photo.get("year", "")).strip()
@@ -224,6 +255,19 @@ def render_photo_card(photo, position, total):
                     f"Enter a four-digit year between 1800 and {CURRENT_YEAR}, "
                     "or leave it blank."
                 )
+            elif not year:
+                detected = detected_photo_year(photo)
+                if detected:
+                    st.caption(
+                        f"Metadata year: {detected}. This will be used unless "
+                        "you enter a year above. For scans or photos of old prints, "
+                        "please check the original year."
+                    )
+                else:
+                    st.caption(
+                        "No original capture year found. You can enter a year "
+                        "above or leave it unknown."
+                    )
             st.button(
                 "Delete", key=f"delete_{photo['id']}",
                 on_click=delete_photo, args=(photo["id"],),
@@ -272,14 +316,12 @@ def submit_photos():
                     "id": draft["id"],
                     "submitter_name": snapshot["name"],
                     "status": "pending",
-                },
-                returning="minimal",
+                }, returning="minimal",
             ).execute()
             draft["parent_saved"] = True
         if not draft["photos_saved"]:
             records = []
             for position, photo in enumerate(photos, start=1):
-                year = str(photo.get("year", "")).strip()
                 records.append({
                     "id": photo["id"],
                     "submission_id": draft["id"],
@@ -287,7 +329,7 @@ def submit_photos():
                     "original_filename": photo["filename"],
                     "photo_order": position,
                     "caption": photo["caption"].strip() or None,
-                    "photo_year": int(year) if year else None,
+                    "photo_year": resolved_photo_year(photo),
                 })
             client.table("submission_photos").insert(
                 records, returning="minimal"
@@ -313,12 +355,12 @@ def render_submission_form():
     draft = get_draft()
     st.subheader("Your photographs")
     st.write(
-        "Choose up to five photographs. Add a caption and, "
-        "if you know it, the year beside each photograph."
+        "Choose up to five photographs. Add a caption and, if you know it, "
+        "the year beside each photograph. If you leave the year blank, "
+        "we’ll use its original metadata year when available."
     )
     uploaded = st.file_uploader(
-        "Choose photographs", type=IMAGE_TYPES,
-        accept_multiple_files=True,
+        "Choose photographs", type=IMAGE_TYPES, accept_multiple_files=True,
         key=f"uploader_{st.session_state['upload_generation']}",
         help=f"Add up to {MAX_PHOTOS} photographs, each under {MAX_FILE_MB} MB.",
     )
@@ -340,8 +382,7 @@ def render_submission_form():
         placeholder="Enter your name",
     )
     if st.button(
-        "Submit photographs", type="primary",
-        disabled=not photos, width="stretch",
+        "Submit photographs", type="primary", disabled=not photos, width="stretch",
     ):
         submit_photos()
 
@@ -447,8 +488,9 @@ def cycle_gallery_photo(submission_id, direction, photo_count):
     if photo_count < 1:
         return
     positions = dict(st.session_state.get("gallery_photo_positions", {}))
-    current = positions.get(submission_id, 0)
-    positions[submission_id] = (current + direction) % photo_count
+    positions[submission_id] = (
+        positions.get(submission_id, 0) + direction
+    ) % photo_count
     st.session_state["gallery_photo_positions"] = positions
 
 
@@ -467,19 +509,15 @@ def render_square_preview(client, photo):
                      style="position:absolute;inset:0;width:100%;height:100%;
                             object-fit:cover;display:block;">
             </div>
-            """,
-            unsafe_allow_html=True,
+            """, unsafe_allow_html=True,
         )
     else:
         st.markdown(
             """
             <div style="width:100%;aspect-ratio:1 / 1;border-radius:12px;
                         background:#F1ECE4;display:flex;align-items:center;
-                        justify-content:center;">
-                Preview unavailable
-            </div>
-            """,
-            unsafe_allow_html=True,
+                        justify-content:center;">Preview unavailable</div>
+            """, unsafe_allow_html=True,
         )
 
 
@@ -491,7 +529,6 @@ def render_gallery(client, submissions):
     approved.sort(key=lambda item: min(submission_years(item), default=9999))
     selected = st.session_state.get("selected_gallery_submission")
     detail = next((item for item in approved if item["id"] == selected), None)
-
     if detail:
         if st.button("Back to gallery"):
             st.session_state["selected_gallery_submission"] = None
@@ -505,7 +542,6 @@ def render_gallery(client, submissions):
                     st.caption(f"Year: {year}")
                 st.write(photo.get("caption") or "No caption added.")
         return
-
     st.subheader("Photo gallery")
     if not approved:
         st.info("No approved photographs are available yet.")
@@ -515,44 +551,39 @@ def render_gallery(client, submissions):
         "Use the arrows to browse photographs in each memory."
     )
     positions = st.session_state.setdefault("gallery_photo_positions", {})
-
     for start in range(0, len(approved), 3):
         columns = st.columns(3, gap="small")
         for column, submission in zip(columns, approved[start:start + 3]):
             submission_id = submission["id"]
             photos = submission["photos"]
-            photo_count = len(photos)
-            current_index = positions.get(submission_id, 0) % photo_count
-            current_photo = photos[current_index]
-
+            count = len(photos)
+            index = positions.get(submission_id, 0) % count
+            current = photos[index]
             with column:
                 with st.container(border=True):
-                    render_square_preview(client, current_photo)
+                    render_square_preview(client, current)
                     previous, counter, following = st.columns(
                         [1, 2, 1], vertical_alignment="center"
                     )
                     previous.button(
                         "←", key=f"gallery_previous_{submission_id}",
-                        help="Previous photograph",
-                        on_click=cycle_gallery_photo,
-                        args=(submission_id, -1, photo_count),
-                        disabled=photo_count == 1, width="stretch",
+                        help="Previous photograph", on_click=cycle_gallery_photo,
+                        args=(submission_id, -1, count), disabled=count == 1,
+                        width="stretch",
                     )
                     with counter:
                         st.markdown(
                             "<div style='text-align:center;'>"
-                            f"{current_index + 1} of {photo_count}</div>",
-                            unsafe_allow_html=True,
+                            f"{index + 1} of {count}</div>", unsafe_allow_html=True,
                         )
                     following.button(
                         "→", key=f"gallery_next_{submission_id}",
-                        help="Next photograph",
-                        on_click=cycle_gallery_photo,
-                        args=(submission_id, 1, photo_count),
-                        disabled=photo_count == 1, width="stretch",
+                        help="Next photograph", on_click=cycle_gallery_photo,
+                        args=(submission_id, 1, count), disabled=count == 1,
+                        width="stretch",
                     )
-                    st.write(current_photo.get("caption") or "No caption added.")
-                    year = photo_year(current_photo, submission)
+                    st.write(current.get("caption") or "No caption added.")
+                    year = photo_year(current, submission)
                     if year:
                         st.caption(f"Year: {year}")
                     st.caption(f"Shared by {submission['submitter_name']}")
