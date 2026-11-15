@@ -21,10 +21,12 @@ st.set_page_config(
     layout="wide",
 )
 
-MAX_PHOTOS = 5
+# No application-level limit on the number of photographs per submission.
 MAX_FILE_MB = 25
 DRAFT_VERSION = 6
 CURRENT_YEAR = datetime.now().year
+DB_BATCH_SIZE = 100
+READ_PAGE_SIZE = 1000
 IMAGE_TYPES = ["jpg", "jpeg", "png", "webp", "heic", "heif"]
 LOGGER = logging.getLogger(__name__)
 
@@ -53,6 +55,7 @@ def new_draft(name=""):
         "uploaded": {},
         "parent_saved": False,
         "photos_saved": False,
+        "saved_photo_ids": [],
     }
 
 
@@ -60,8 +63,10 @@ def get_draft():
     draft = st.session_state.get("photo_draft")
     if not draft or draft.get("version") != DRAFT_VERSION:
         st.session_state["photo_draft"] = new_draft()
+    draft = st.session_state["photo_draft"]
+    draft.setdefault("saved_photo_ids", [])
     st.session_state.setdefault("upload_generation", 0)
-    return st.session_state["photo_draft"]
+    return draft
 
 
 def save_name():
@@ -97,6 +102,12 @@ def open_photo(photo):
         return ImageOps.exif_transpose(image).convert("RGB")
 
 
+def preview_photo(photo):
+    image = open_photo(photo)
+    image.thumbnail((1000, 1000))
+    return image
+
+
 def prepare_photo(photo):
     image = open_photo(photo)
     buffer = io.BytesIO()
@@ -114,7 +125,7 @@ def valid_year(value):
 
 
 def metadata_photo_year(photo):
-    """Read EXIF DateTimeOriginal, never upload or modification time."""
+    """Read the original capture year, not the upload or modification date."""
     try:
         with Image.open(io.BytesIO(photo["bytes"])) as image:
             exif = image.getexif()
@@ -138,7 +149,6 @@ def metadata_photo_year(photo):
 
 
 def detected_photo_year(photo):
-    # Older in-session drafts may not yet have the cached metadata value.
     if "metadata_year" not in photo:
         photo["metadata_year"] = metadata_photo_year(photo)
     return photo["metadata_year"]
@@ -161,11 +171,10 @@ def ingest_uploads(files):
         if digest in existing:
             messages.append(f"{uploaded.name}: this photograph is already added.")
             continue
-        if len(draft["photos"]) >= MAX_PHOTOS:
-            messages.append(f"{uploaded.name}: you can add up to {MAX_PHOTOS} photographs.")
-            continue
         if len(data) > MAX_FILE_MB * 1024 * 1024:
-            messages.append(f"{uploaded.name}: please choose a file under {MAX_FILE_MB} MB.")
+            messages.append(
+                f"{uploaded.name}: please choose a file under {MAX_FILE_MB} MB."
+            )
             continue
         try:
             with Image.open(io.BytesIO(data)) as image:
@@ -195,8 +204,6 @@ def validation_errors():
         errors.append("Please enter your name under Submitted By.")
     if not draft["photos"]:
         errors.append("Please add at least one photograph.")
-    if len(draft["photos"]) > MAX_PHOTOS:
-        errors.append(f"Please add no more than {MAX_PHOTOS} photographs.")
     for position, photo in enumerate(draft["photos"], start=1):
         year = str(photo.get("year", "")).strip()
         if year and not valid_year(year):
@@ -225,7 +232,7 @@ def render_photo_card(photo, position, total):
     with st.container(border=True):
         image_column, details_column = st.columns([1, 1.35])
         with image_column:
-            st.image(open_photo(photo), width="stretch")
+            st.image(preview_photo(photo), width="stretch")
         with details_column:
             st.markdown(f"### Photograph {position + 1} of {total}")
             caption_key = f"edit_caption_{photo['id']}"
@@ -274,6 +281,18 @@ def render_photo_card(photo, position, total):
             )
 
 
+def record_for_photo(photo, position, draft):
+    return {
+        "id": photo["id"],
+        "submission_id": draft["id"],
+        "storage_path": draft["uploaded"][photo["id"]],
+        "original_filename": photo["filename"],
+        "photo_order": position,
+        "caption": photo["caption"].strip() or None,
+        "photo_year": resolved_photo_year(photo),
+    }
+
+
 def submit_photos():
     draft = get_draft()
     errors = validation_errors()
@@ -309,7 +328,7 @@ def submit_photos():
                     },
                 )
                 draft["uploaded"][photo["id"]] = path
-        progress.progress(85, text="Saving your photographs…")
+        progress.progress(80, text="Saving your photograph details…")
         if not draft["parent_saved"]:
             client.table("submissions").insert(
                 {
@@ -319,22 +338,29 @@ def submit_photos():
                 }, returning="minimal",
             ).execute()
             draft["parent_saved"] = True
+
         if not draft["photos_saved"]:
-            records = []
-            for position, photo in enumerate(photos, start=1):
-                records.append({
-                    "id": photo["id"],
-                    "submission_id": draft["id"],
-                    "storage_path": draft["uploaded"][photo["id"]],
-                    "original_filename": photo["filename"],
-                    "photo_order": position,
-                    "caption": photo["caption"].strip() or None,
-                    "photo_year": resolved_photo_year(photo),
-                })
-            client.table("submission_photos").insert(
-                records, returning="minimal"
-            ).execute()
+            saved_ids = set(draft["saved_photo_ids"])
+            pending = [
+                record_for_photo(photo, position, draft)
+                for position, photo in enumerate(photos, start=1)
+                if photo["id"] not in saved_ids
+            ]
+            for start in range(0, len(pending), DB_BATCH_SIZE):
+                batch = pending[start:start + DB_BATCH_SIZE]
+                client.table("submission_photos").insert(
+                    batch, returning="minimal"
+                ).execute()
+                draft["saved_photo_ids"].extend(row["id"] for row in batch)
+                progress.progress(
+                    min(99, 80 + int(len(draft["saved_photo_ids"]) / len(photos) * 19)),
+                    text=(
+                        f"Saving photograph details: "
+                        f"{len(draft['saved_photo_ids'])} of {len(photos)}…"
+                    ),
+                )
             draft["photos_saved"] = True
+
         progress.progress(100, text="Your photographs have been received.")
         draft["complete"] = True
     except Exception:
@@ -355,14 +381,22 @@ def render_submission_form():
     draft = get_draft()
     st.subheader("Your photographs")
     st.write(
-        "Choose up to five photographs. Add a caption and, if you know it, "
-        "the year beside each photograph. If you leave the year blank, "
-        "we’ll use its original metadata year when available."
+        "Choose the photographs you would like to share. You can select "
+        "multiple photographs at once or add more after your first selection."
+    )
+    st.write(
+        "Add a caption and, if you know it, the year beside each photograph. "
+        "If you leave the year blank, we’ll use its original metadata year "
+        "when available."
     )
     uploaded = st.file_uploader(
         "Choose photographs", type=IMAGE_TYPES, accept_multiple_files=True,
         key=f"uploader_{st.session_state['upload_generation']}",
-        help=f"Add up to {MAX_PHOTOS} photographs, each under {MAX_FILE_MB} MB.",
+        help=(
+            "There is no set limit on the number of photographs. "
+            f"Each photograph must be under {MAX_FILE_MB} MB. Very large "
+            "collections may need to be shared in smaller groups."
+        ),
     )
     if uploaded:
         ingest_uploads(uploaded)
@@ -371,9 +405,10 @@ def render_submission_form():
         st.warning(message)
     photos = draft["photos"]
     if photos:
-        st.caption(f"{len(photos)} of {MAX_PHOTOS} photographs added.")
+        count = len(photos)
+        st.caption(f"{count} photograph{'s' if count != 1 else ''} added.")
         for position, photo in enumerate(photos):
-            render_photo_card(photo, position, len(photos))
+            render_photo_card(photo, position, count)
     st.divider()
     st.subheader("Submitted By")
     st.session_state["draft_name"] = draft["name"]
@@ -430,14 +465,27 @@ def curator_login():
     return False
 
 
+def read_all_rows(client, table, order_columns):
+    rows = []
+    offset = 0
+    while True:
+        query = client.table(table).select("*")
+        for column, descending in order_columns:
+            query = query.order(column, desc=descending)
+        page = query.range(offset, offset + READ_PAGE_SIZE - 1).execute().data or []
+        if not page:
+            break
+        rows.extend(page)
+        offset += len(page)
+    return rows
+
+
 def load_curator_data(client):
-    submissions = (
-        client.table("submissions").select("*")
-        .order("created_at", desc=True).execute().data or []
+    submissions = read_all_rows(
+        client, "submissions", [("created_at", True), ("id", False)]
     )
-    photos = (
-        client.table("submission_photos").select("*")
-        .order("photo_order").execute().data or []
+    photos = read_all_rows(
+        client, "submission_photos", [("photo_order", False), ("id", False)]
     )
     grouped = {}
     for photo in photos:
