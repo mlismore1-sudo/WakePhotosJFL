@@ -1,10 +1,17 @@
+# Place this file in .streamlit/config.toml relative to the app working directory.
+# This limits EACH file, not the number of photographs in a submission.
+[server]
+maxUploadSize = 25
+enableCORS = true
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false
+
 [theme]
 base = "light"
-primaryColor = "#7A6A55"
+primaryColor = "#7A6B55"
 backgroundColor = "#FAF7F2"
 secondaryBackgroundColor = "#F1ECE4"
 textColor = "#33302B"
 font = "serif"
-
-[theme.sidebar]
-backgroundColor = "#F1ECE4"
