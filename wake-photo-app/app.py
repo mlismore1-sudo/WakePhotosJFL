@@ -30,6 +30,9 @@ st.set_page_config(page_title="In Loving Memory Of John Francis Lismore", layout
 
 MAX_FILE_MB = 25
 DRAFT_VERSION = 7
+SLIDESHOW_VERSION = 1
+DEFAULT_SLIDE_SECONDS = 8
+MAX_SLIDE_SECONDS = 60
 CURRENT_YEAR = datetime.now().year
 DB_BATCH_SIZE = 100
 READ_PAGE_SIZE = 1000
@@ -50,17 +53,13 @@ def get_public_client():
 
 
 def get_service_client():
-    # Never return this client or its credentials to a browser.
     return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_SERVICE_ROLE_KEY"])
 
 
 def new_draft(name=""):
-    return {
-        "version": DRAFT_VERSION, "id": str(uuid.uuid4()), "name": name,
-        "photos": [], "complete": False, "upload_started": False,
-        "uploaded": {}, "parent_saved": False, "photos_saved": False,
-        "saved_photo_ids": [],
-    }
+    return {"version": DRAFT_VERSION, "id": str(uuid.uuid4()), "name": name, "photos": [],
+            "complete": False, "upload_started": False, "uploaded": {}, "parent_saved": False,
+            "photos_saved": False, "saved_photo_ids": []}
 
 
 def get_draft():
@@ -183,10 +182,8 @@ def ingest_uploads(files):
         except Exception:
             messages.append(f"{uploaded.name}: this photograph could not be opened.")
             continue
-        photo = {
-            "id": str(uuid.uuid4()), "digest": digest, "filename": uploaded.name,
-            "bytes": data, "caption": "", "year": "",
-        }
+        photo = {"id": str(uuid.uuid4()), "digest": digest, "filename": uploaded.name,
+                 "bytes": data, "caption": "", "year": ""}
         photo["metadata_year"] = metadata_photo_year(photo)
         draft["photos"].append(photo)
         existing.add(digest)
@@ -204,19 +201,15 @@ def validation_errors():
     for index, photo in enumerate(draft["photos"], start=1):
         year = str(photo.get("year", "")).strip()
         if year and not valid_year(year):
-            errors.append(
-                f"Photograph {index}: enter a four-digit year between 1800 and "
-                f"{CURRENT_YEAR}, or leave the year blank."
-            )
+            errors.append(f"Photograph {index}: enter a four-digit year between 1800 and {CURRENT_YEAR}, or leave the year blank.")
     return errors
 
 
 def render_header():
     st.markdown(
-        """<div style="text-align:center;padding:1.6rem 1rem;background:#F1ECE4;
-        color:#33302B;border-radius:16px;margin-bottom:1.5rem;">
-        <h1 style="font-size:2rem;margin:0 0 .5rem;">In Loving Memory Of John Francis Lismore</h1>
-        <p style="margin:0;">Sharing photographs and memories</p></div>""",
+        """<div style="text-align:center;padding:1.6rem 1rem;background:#F1ECE4;color:#33302B;
+        border-radius:16px;margin-bottom:1.5rem;"><h1 style="font-size:2rem;margin:0 0 .5rem;">
+        In Loving Memory Of John Francis Lismore</h1><p style="margin:0;">Sharing photographs and memories</p></div>""",
         unsafe_allow_html=True,
     )
 
@@ -232,40 +225,29 @@ def render_photo_card(photo, position, total):
             year_key = f"edit_year_{photo['id']}"
             st.session_state[caption_key] = photo["caption"]
             st.session_state[year_key] = photo.get("year", "")
-            st.text_area(
-                "Caption", key=caption_key, on_change=save_photo_field,
-                args=(photo["id"], "caption", caption_key), height=110,
-                placeholder="For example: John with family at Emma’s wedding",
-            )
-            st.text_input(
-                "Year (optional)", key=year_key, on_change=save_photo_field,
-                args=(photo["id"], "year", year_key), max_chars=4,
-                placeholder="For example: 1978",
-                help="An entered year takes priority over the original metadata year.",
-            )
+            st.text_area("Caption", key=caption_key, on_change=save_photo_field,
+                         args=(photo["id"], "caption", caption_key), height=110,
+                         placeholder="For example: John with family at Emma’s wedding")
+            st.text_input("Year (optional)", key=year_key, on_change=save_photo_field,
+                          args=(photo["id"], "year", year_key), max_chars=4,
+                          placeholder="For example: 1978",
+                          help="An entered year takes priority over the original metadata year.")
             entered = str(photo.get("year", "")).strip()
             if entered and not valid_year(entered):
                 st.warning(f"Enter a four-digit year between 1800 and {CURRENT_YEAR}, or leave it blank.")
             elif not entered:
                 year = detected_photo_year(photo)
                 if year:
-                    st.caption(
-                        f"Metadata year: {year}. This will be used unless you enter a year. "
-                        "For scans or photographs of old prints, please check the original year."
-                    )
+                    st.caption(f"Metadata year: {year}. This will be used unless you enter a year. For scans or photographs of old prints, please check the original year.")
                 else:
                     st.caption("No original capture year found. You can enter a year or leave it unknown.")
             st.button("Delete", key=f"delete_{photo['id']}", on_click=delete_photo, args=(photo["id"],))
 
 
 def record_for_photo(photo, position, draft):
-    return {
-        "id": photo["id"], "submission_id": draft["id"],
-        "storage_path": draft["uploaded"][photo["id"]],
-        "original_filename": photo["filename"], "photo_order": position,
-        "caption": photo["caption"].strip() or None,
-        "photo_year": resolved_photo_year(photo),
-    }
+    return {"id": photo["id"], "submission_id": draft["id"], "storage_path": draft["uploaded"][photo["id"]],
+            "original_filename": photo["filename"], "photo_order": position,
+            "caption": photo["caption"].strip() or None, "photo_year": resolved_photo_year(photo)}
 
 
 def submit_photos():
@@ -276,9 +258,8 @@ def submit_photos():
             st.error(message)
         return
     if "submission_snapshot" not in draft:
-        draft["submission_snapshot"] = {
-            "name": draft["name"].strip(), "photos": [dict(photo) for photo in draft["photos"]],
-        }
+        draft["submission_snapshot"] = {"name": draft["name"].strip(),
+                                        "photos": [dict(photo) for photo in draft["photos"]]}
     snapshot = draft["submission_snapshot"]
     photos = snapshot["photos"]
     progress = st.progress(0, text="Preparing your photographs…")
@@ -290,32 +271,25 @@ def submit_photos():
             if photo["id"] not in draft["uploaded"]:
                 data, filename = prepare_photo(photo)
                 path = f"pending/{draft['id']}/{photo['id']}-{filename}"
-                progress.progress(
-                    int(index / len(photos) * 80),
-                    text=f"Uploading photograph {index + 1} of {len(photos)}…",
-                )
-                bucket.upload(path=path, file=data, file_options={
-                    "content-type": "image/jpeg", "cache-control": "3600", "upsert": "false",
-                })
+                progress.progress(int(index / len(photos) * 80), text=f"Uploading photograph {index + 1} of {len(photos)}…")
+                bucket.upload(path=path, file=data, file_options={"content-type": "image/jpeg",
+                             "cache-control": "3600", "upsert": "false"})
                 draft["uploaded"][photo["id"]] = path
         progress.progress(80, text="Saving photograph details…")
         if not draft["parent_saved"]:
-            client.table("submissions").insert({
-                "id": draft["id"], "submitter_name": snapshot["name"], "status": "pending",
-            }, returning="minimal").execute()
+            client.table("submissions").insert({"id": draft["id"], "submitter_name": snapshot["name"],
+                                                "status": "pending"}, returning="minimal").execute()
             draft["parent_saved"] = True
         if not draft["photos_saved"]:
             saved_ids = set(draft["saved_photo_ids"])
-            pending = [record_for_photo(photo, index, draft)
-                       for index, photo in enumerate(photos, start=1) if photo["id"] not in saved_ids]
+            pending = [record_for_photo(photo, index, draft) for index, photo in enumerate(photos, start=1)
+                       if photo["id"] not in saved_ids]
             for start in range(0, len(pending), DB_BATCH_SIZE):
                 batch = pending[start:start + DB_BATCH_SIZE]
                 client.table("submission_photos").insert(batch, returning="minimal").execute()
                 draft["saved_photo_ids"].extend(row["id"] for row in batch)
-                progress.progress(
-                    min(99, 80 + int(len(draft["saved_photo_ids"]) / len(photos) * 19)),
-                    text=f"Saving photograph details: {len(draft['saved_photo_ids'])} of {len(photos)}…",
-                )
+                progress.progress(min(99, 80 + int(len(draft["saved_photo_ids"]) / len(photos) * 19)),
+                                  text=f"Saving photograph details: {len(draft['saved_photo_ids'])} of {len(photos)}…")
             draft["photos_saved"] = True
         progress.progress(100, text="Your photographs have been received.")
         draft["complete"] = True
@@ -333,20 +307,12 @@ def submit_photos():
 def render_submission_form():
     draft = get_draft()
     st.subheader("Your photographs")
-    st.write(
-        "Choose the photographs you would like to share. You can select multiple "
-        "photographs at once or add more after your first selection."
-    )
-    st.write(
-        "Add a caption and, if you know it, the year beside each photograph. If you leave "
-        "the year blank, we’ll use its original metadata year when available."
-    )
-    uploaded = st.file_uploader(
-        "Choose photographs", type=IMAGE_TYPES, accept_multiple_files=True,
-        key=f"uploader_{st.session_state['upload_generation']}",
-        help=(f"No set photograph-count limit. Each photograph must be under {MAX_FILE_MB} MB. "
-              "Very large collections may need to be shared in smaller groups."),
-    )
+    st.write("Choose the photographs you would like to share. You can select multiple photographs at once or add more after your first selection.")
+    st.write("Add a caption and, if you know it, the year beside each photograph. If you leave the year blank, we’ll use its original metadata year when available.")
+    uploaded = st.file_uploader("Choose photographs", type=IMAGE_TYPES, accept_multiple_files=True,
+                                key=f"uploader_{st.session_state['upload_generation']}",
+                                help=(f"No set photograph-count limit. Each photograph must be under {MAX_FILE_MB} MB. "
+                                      "Very large collections may need to be shared in smaller groups."))
     if uploaded:
         ingest_uploads(uploaded)
         st.rerun()
@@ -428,7 +394,6 @@ def load_curator_data(client):
 
 
 def photo_year(photo, submission):
-    # A present NULL is deliberately unknown; only fall back for legacy rows without this column.
     value = photo.get("photo_year") if "photo_year" in photo else submission.get("photo_year")
     return int(value) if value not in (None, "") else None
 
@@ -438,14 +403,45 @@ def submission_years(submission):
                    if photo_year(photo, submission) is not None})
 
 
-def signed_image_url(client, photo):
-    response = client.storage.from_(st.secrets["SUPABASE_BUCKET"]).create_signed_url(photo["storage_path"], 3600)
+@st.cache_data(ttl=300, show_spinner=False, hash_funcs={"supabase._sync.client.Client": lambda client: id(client)})
+def load_gallery_data(_client, submissions):
+    approved = [item for item in submissions if item.get("status") == "approved" and item.get("photos")]
+    approved.sort(key=lambda item: min(submission_years(item), default=9999))
+    return approved
+
+
+@st.cache_data(ttl=300, show_spinner=False, hash_funcs={"supabase._sync.client.Client": lambda client: id(client)})
+def load_slideshow_data(_client, submissions):
+    """Prepare the approved slideshow once, then reuse it across reruns."""
+    photos = []
+    for submission in submissions:
+        if submission.get("status") != "approved":
+            continue
+        for photo in submission.get("photos", []):
+            photos.append({"submission_id": submission["id"], "submitter_name": submission.get("submitter_name", ""),
+                           "photo_id": photo["id"], "storage_path": photo["storage_path"],
+                           "caption": photo.get("caption") or "", "year": photo_year(photo, submission)})
+    photos.sort(key=lambda photo: (photo["year"] is None, photo["year"] or 0,
+                                   str(photo["submission_id"]), str(photo["photo_id"])))
+    return photos
+
+
+def slideshow_signature(photos, seconds):
+    payload = {"version": SLIDESHOW_VERSION, "seconds": seconds,
+               "photos": [{"photo_id": photo["photo_id"], "storage_path": photo["storage_path"],
+                           "caption": photo["caption"], "year": photo["year"]} for photo in photos]}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+
+
+@st.cache_data(ttl=3300, show_spinner=False, hash_funcs={"supabase._sync.client.Client": lambda client: id(client)})
+def signed_image_url(_client, storage_path):
+    response = _client.storage.from_(st.secrets["SUPABASE_BUCKET"]).create_signed_url(storage_path, 3600)
     return response.get("signedURL") or response.get("signedUrl")
 
 
 def show_stored_image(client, photo):
     try:
-        url = signed_image_url(client, photo)
+        url = signed_image_url(client, photo["storage_path"])
         if url:
             st.image(url, width="stretch")
         else:
@@ -464,21 +460,18 @@ def cycle_gallery_photo(submission_id, direction, photo_count):
 
 def render_square_preview(client, photo):
     try:
-        url = signed_image_url(client, photo)
+        url = signed_image_url(client, photo["storage_path"])
     except Exception:
         url = None
     content = (f'<img src="{escape(url, quote=True)}" alt="Photograph from a shared memory" '
                'style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;">') if url else "Preview unavailable"
-    st.markdown(
-        '<div style="width:100%;aspect-ratio:1 / 1;overflow:hidden;border-radius:12px;'
-        'background:#F1ECE4;position:relative;display:flex;align-items:center;justify-content:center;">'
-        + content + '</div>', unsafe_allow_html=True,
-    )
+    st.markdown('<div style="width:100%;aspect-ratio:1 / 1;overflow:hidden;border-radius:12px;background:#F1ECE4;'
+                'position:relative;display:flex;align-items:center;justify-content:center;">' + content + '</div>',
+                unsafe_allow_html=True)
 
 
 def render_gallery(client, submissions):
-    approved = [item for item in submissions if item.get("status") == "approved" and item.get("photos")]
-    approved.sort(key=lambda item: min(submission_years(item), default=9999))
+    approved = load_gallery_data(client, submissions)
     selected = st.session_state.get("selected_gallery_submission")
     detail = next((item for item in approved if item["id"] == selected), None)
     if detail:
@@ -512,18 +505,14 @@ def render_gallery(client, submissions):
                 with st.container(border=True):
                     render_square_preview(client, current)
                     previous, counter, following = st.columns([1, 2, 1], vertical_alignment="center")
-                    previous.button(
-                        "←", key=f"gallery_previous_{submission_id}", help="Previous photograph",
-                        on_click=cycle_gallery_photo, args=(submission_id, -1, count),
-                        disabled=count == 1, width="stretch",
-                    )
+                    previous.button("←", key=f"gallery_previous_{submission_id}", help="Previous photograph",
+                                    on_click=cycle_gallery_photo, args=(submission_id, -1, count),
+                                    disabled=count == 1, width="stretch")
                     with counter:
                         st.markdown(f"<div style='text-align:center;'>{index + 1} of {count}</div>", unsafe_allow_html=True)
-                    following.button(
-                        "→", key=f"gallery_next_{submission_id}", help="Next photograph",
-                        on_click=cycle_gallery_photo, args=(submission_id, 1, count),
-                        disabled=count == 1, width="stretch",
-                    )
+                    following.button("→", key=f"gallery_next_{submission_id}", help="Next photograph",
+                                     on_click=cycle_gallery_photo, args=(submission_id, 1, count),
+                                     disabled=count == 1, width="stretch")
                     st.write(current.get("caption") or "No caption added.")
                     year = photo_year(current, submission)
                     if year is not None:
@@ -532,6 +521,101 @@ def render_gallery(client, submissions):
                     if st.button("View photographs", key=f"gallery_open_{submission_id}", width="stretch"):
                         st.session_state["selected_gallery_submission"] = submission_id
                         st.rerun()
+
+
+def render_slideshow(client, submissions):
+    photos = load_slideshow_data(client, submissions)
+    if not photos:
+        st.info("No approved photographs are available for the slideshow yet.")
+        return
+    st.subheader("Looping slideshow")
+    st.caption(f"{len(photos)} approved photograph(s). The slideshow repeats continuously. "
+               "Autoplay is muted because browsers require user interaction before playing sound.")
+    seconds = int(st.slider("Seconds per photograph", min_value=2, max_value=MAX_SLIDE_SECONDS,
+                            value=DEFAULT_SLIDE_SECONDS, step=1, key="slideshow_seconds",
+                            help="Controls how long each photograph remains on screen. The slideshow loops continuously."))
+    include_captions = st.toggle("Show year and caption", value=True, key="slideshow_include_captions",
+                                 help="Turn this off for a photograph-only slideshow.")
+    signature = slideshow_signature(photos, seconds)
+    if st.session_state.get("slideshow_signature") != signature:
+        st.session_state["slideshow_signature"] = signature
+        st.session_state["slideshow_urls"] = [signed_image_url(client, photo["storage_path"]) for photo in photos]
+    urls = st.session_state["slideshow_urls"]
+    slides = []
+    for index, (photo, url) in enumerate(zip(photos, urls)):
+        safe_url = escape(url, quote=True)
+        year = str(photo["year"]) if photo["year"] is not None else ""
+        caption = escape(clean_text(photo["caption"]), quote=False)
+        submitter = escape(photo["submitter_name"], quote=False)
+        details = ""
+        if include_captions:
+            parts = []
+            if year:
+                parts.append('<div class="year">' + year + "</div>")
+            if caption:
+                parts.append('<div class="caption">' + caption + "</div>")
+            if submitter:
+                parts.append('<div class="submitter">Shared by ' + submitter + "</div>")
+            details = '<div class="details">' + "".join(parts) + "</div>"
+        slides.append('<div class="slide" data-index="' + str(index) + '">'
+                      '<img src="' + safe_url + '" alt="Photograph from a shared memory">' + details + "</div>")
+    left_arrow, right_arrow = chr(0x2190), chr(0x2192)
+    html = ('<div class="memorial-slideshow" data-seconds="' + str(seconds) + '">'
+            '<div class="stage">' + "".join(slides) + "</div>"
+            '<div class="controls">'
+            '<button type="button" class="previous" aria-label="Previous photograph">' + left_arrow + "</button>"
+            '<div class="counter"><span class="current">1</span> of ' + str(len(photos)) + "</div>"
+            '<button type="button" class="pause" aria-label="Pause slideshow">Pause</button>'
+            '<button type="button" class="next" aria-label="Next photograph">' + right_arrow + "</button>"
+            "</div></div>"
+            "<style>"
+            ".memorial-slideshow{width:100%;max-width:1100px;margin:0 auto;border-radius:16px;overflow:hidden;"
+            "background:#F1ECE4;color:#33302B;border:1px solid #D9CFBE;}"
+            ".memorial-slideshow .stage{position:relative;width:100%;aspect-ratio:16 / 9;background:#F1ECE4;}"
+            ".memorial-slideshow .slide{position:absolute;inset:0;display:none;flex-direction:column;"
+            "align-items:center;justify-content:center;padding:18px;box-sizing:border-box;}"
+            ".memorial-slideshow .slide.active{display:flex;}"
+            ".memorial-slideshow .slide img{max-width:100%;max-height:calc(100% - 112px);object-fit:contain;"
+            "border-radius:8px;box-shadow:0 8px 24px rgba(51,48,43,.18);}"
+            ".memorial-slideshow .details{position:absolute;left:0;right:0;bottom:0;padding:12px 20px 16px;"
+            "text-align:center;background:linear-gradient(to top,rgba(250,247,242,.98),rgba(250,247,242,.72));}"
+            ".memorial-slideshow .year{font-weight:700;font-size:1.05rem;margin-bottom:2px;}"
+            ".memorial-slideshow .caption{font-size:.95rem;line-height:1.35;max-width:850px;margin:0 auto;}"
+            ".memorial-slideshow .submitter{margin-top:4px;font-size:.8rem;opacity:.75;}"
+            ".memorial-slideshow .controls{display:flex;align-items:center;justify-content:center;gap:14px;"
+            "padding:10px 14px;background:#F1ECE4;}"
+            ".memorial-slideshow button{border:1px solid #B9A98F;background:#FAF7F2;color:#33302B;"
+            "border-radius:999px;width:40px;height:40px;font-size:1.1rem;cursor:pointer;}"
+            ".memorial-slideshow .pause{width:auto;padding:0 16px;font-size:.9rem;}"
+            ".memorial-slideshow .counter{min-width:86px;text-align:center;font-size:.9rem;}"
+            "@media (max-width:760px){.memorial-slideshow .stage{aspect-ratio:4 / 5;}"
+            ".memorial-slideshow .slide img{max-height:calc(100% - 148px);}"
+            ".memorial-slideshow .caption{font-size:.85rem;}}"
+            "</style>"
+            "<script>(()=>{"
+            "const root=document.currentScript.previousElementSibling;"
+            "const stage=root.querySelector('.stage');"
+            "const slides=Array.from(stage.querySelectorAll('.slide'));"
+            "const current=root.querySelector('.current');"
+            "const previous=root.querySelector('.previous');"
+            "const next=root.querySelector('.next');"
+            "const pause=root.querySelector('.pause');"
+            "const seconds=Math.max(2,Number(root.dataset.seconds)||8);"
+            "let index=0;let timer=null;let paused=false;"
+            "const show=(nextIndex)=>{index=(nextIndex+slides.length)%slides.length;"
+            "slides.forEach((slide,position)=>slide.classList.toggle('active',position===index));"
+            "current.textContent=index+1;};"
+            "const schedule=()=>{if(timer)clearTimeout(timer);if(paused)return;"
+            "timer=setTimeout(()=>show(index+1),seconds*1000);};"
+            "const stop=()=>{if(timer)clearTimeout(timer);timer=null;};"
+            "previous.addEventListener('click',()=>{stop();show(index-1);schedule();});"
+            "next.addEventListener('click',()=>{stop();show(index+1);schedule();});"
+            "pause.addEventListener('click',()=>{paused=!paused;"
+            "pause.textContent=paused?'Play':'Pause';if(paused)stop();else schedule();});"
+            "show(0);schedule();})();</script>")
+    st.html(html)
+    st.caption("Use the arrows to move manually. Select Pause to stop the automatic advance; select Play to resume. "
+               "The slideshow returns to the beginning after the final photograph.")
 
 
 def filter_review_submissions(submissions, chosen):
@@ -546,10 +630,8 @@ def render_review(client, submissions):
     notice = st.session_state.pop("curator_notice", None)
     if notice:
         st.success(notice)
-    chosen = st.selectbox(
-        "Filter by status", ["All"] + statuses, key="review_filter",
-        format_func=lambda value: "All (excluding rejected)" if value == "All" else value.title(),
-    )
+    chosen = st.selectbox("Filter by status", ["All"] + statuses, key="review_filter",
+                          format_func=lambda value: "All (excluding rejected)" if value == "All" else value.title())
     filtered = filter_review_submissions(submissions, chosen)
     st.caption(f"{len(filtered)} submission(s)")
     if not filtered:
@@ -565,17 +647,13 @@ def render_review(client, submissions):
                         show_stored_image(client, photo)
                     with details_column:
                         caption = st.text_area("Caption", value=photo.get("caption") or "", key=f"review_caption_{photo['id']}")
-                        year = st.text_input(
-                            "Year (optional)", value=str(photo_year(photo, submission) or ""),
-                            key=f"review_year_{photo['id']}", max_chars=4,
-                        )
+                        year = st.text_input("Year (optional)", value=str(photo_year(photo, submission) or ""),
+                                             key=f"review_year_{photo['id']}", max_chars=4)
                     updates.append((photo["id"], caption, year))
                 current = submission.get("status", "pending")
-                status = st.selectbox(
-                    "Submission status", statuses,
-                    index=statuses.index(current) if current in statuses else 0,
-                    key=f"review_status_{submission['id']}", format_func=str.title,
-                )
+                status = st.selectbox("Submission status", statuses,
+                                      index=statuses.index(current) if current in statuses else 0,
+                                      key=f"review_status_{submission['id']}", format_func=str.title)
                 saved = st.form_submit_button("Save changes")
             if saved:
                 if any(year.strip() and not valid_year(year) for _, _, year in updates):
@@ -583,27 +661,20 @@ def render_review(client, submissions):
                     continue
                 try:
                     for photo_id, caption, year in updates:
-                        client.table("submission_photos").update({
-                            "caption": caption.strip() or None,
-                            "photo_year": int(year) if year.strip() else None,
-                        }).eq("id", photo_id).execute()
+                        client.table("submission_photos").update({"caption": caption.strip() or None,
+                                                                  "photo_year": int(year) if year.strip() else None}).eq("id", photo_id).execute()
                     years = {int(year) for _, _, year in updates if year.strip()}
-                    client.table("submissions").update({
-                        "status": status, "photo_year": next(iter(years)) if len(years) == 1 else None,
-                    }).eq("id", submission["id"]).execute()
+                    client.table("submissions").update({"status": status,
+                                                        "photo_year": next(iter(years)) if len(years) == 1 else None}).eq("id", submission["id"]).execute()
                 except Exception:
                     LOGGER.exception("Curator update failed")
                     st.error("Could not save all changes. Please try again.")
                 else:
                     st.session_state.pop("prepared_export", None)
-                    st.session_state["curator_notice"] = (
-                        "Submission rejected and removed from this view. Select Rejected in the filter to view or restore it."
-                        if status == "rejected" and chosen != "rejected" else "Changes saved."
-                    )
+                    st.session_state["curator_notice"] = ("Submission rejected and removed from this view. Select Rejected in the filter to view or restore it."
+                                                          if status == "rejected" and chosen != "rejected" else "Changes saved.")
                     st.rerun()
 
-
-# ---------- Presentation and PDF exports ----------
 
 def clean_text(value):
     text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
@@ -616,17 +687,12 @@ def export_rows(submissions, statuses=None):
         if statuses is not None and submission.get("status") not in statuses:
             continue
         for photo in submission.get("photos", []):
-            rows.append({
-                "submission_created_at": submission.get("created_at", ""),
-                "submission_id": submission["id"],
-                "submitter_name": submission.get("submitter_name", ""),
-                "photo_id": photo["id"], "photo_year": photo_year(photo, submission),
-                "caption": photo.get("caption") or "",
-                "photo_filename": photo.get("original_filename") or "photograph.jpg",
-                "photo_storage_path": photo["storage_path"],
-                "photo_order": photo.get("photo_order") or 0,
-                "submission_status": submission.get("status", ""),
-            })
+            rows.append({"submission_created_at": submission.get("created_at", ""), "submission_id": submission["id"],
+                         "submitter_name": submission.get("submitter_name", ""), "photo_id": photo["id"],
+                         "photo_year": photo_year(photo, submission), "caption": photo.get("caption") or "",
+                         "photo_filename": photo.get("original_filename") or "photograph.jpg",
+                         "photo_storage_path": photo["storage_path"], "photo_order": photo.get("photo_order") or 0,
+                         "submission_status": submission.get("status", "")})
     return rows
 
 
@@ -640,7 +706,6 @@ def sort_export_rows(rows, order):
 
 
 def register_export_fonts():
-    # Bundled ReportLab fonts avoid OS font dependencies and support common accented names.
     font_dir = Path(reportlab.__file__).parent / "fonts"
     if "MemorialSans" not in pdfmetrics.getRegisteredFontNames():
         pdfmetrics.registerFont(TTFont("MemorialSans", str(font_dir / "Vera.ttf")))
@@ -681,7 +746,6 @@ def caption_chunks(caption):
 def export_image(data):
     with Image.open(io.BytesIO(data)) as source:
         image = rgb_image(source)
-        # Export copies only; the stored photographs are never changed.
         image.thumbnail((2560, 2560), Image.Resampling.LANCZOS)
         dimensions = image.size
         buffer = io.BytesIO()
@@ -741,8 +805,8 @@ def add_pdf_photo(pdf, image_data, dimensions, row, lines, continuation):
     pdf.setFillColor(HexColor("#" + BACKGROUND))
     pdf.rect(0, 0, SLIDE_W, SLIDE_H, fill=1, stroke=0)
     left, top, width, height = fitted_image_box(dimensions)
-    pdf.drawImage(ImageReader(io.BytesIO(image_data)), left, SLIDE_H - top - height,
-                  width=width, height=height, preserveAspectRatio=True)
+    pdf.drawImage(ImageReader(io.BytesIO(image_data)), left, SLIDE_H - top - height, width=width, height=height,
+                  preserveAspectRatio=True)
     if row["photo_year"] is not None:
         pdf_centred(pdf, str(row["photo_year"]), 382, "MemorialSansBold", 22)
     for index, line in enumerate(lines):
@@ -769,7 +833,6 @@ def build_presentations(client, rows, formats, progress_callback=None):
     page_count = 0
     for index, row in enumerate(rows, start=1):
         try:
-            # Use authenticated storage downloads rather than expiring preview URLs.
             data = bucket.download(row["photo_storage_path"])
             image_data, dimensions = export_image(data)
             for part, lines in enumerate(caption_chunks(row["caption"])):
@@ -795,40 +858,25 @@ def build_presentations(client, rows, formats, progress_callback=None):
 
 def render_export(client, submissions):
     st.subheader("Export photographs")
-    st.write(
-        "Create a PowerPoint presentation for Google Slides, a PDF, or both. "
-        "Each photograph is shown without cropping, with its year and caption underneath."
-    )
-    statuses = st.multiselect(
-        "Include submissions with these statuses", ["approved", "pending", "private", "rejected"],
-        default=["approved"], format_func=str.title, key="export_statuses",
-    )
+    st.write("Create a PowerPoint presentation for Google Slides, a PDF, or both. Each photograph is shown without cropping, with its year and caption underneath.")
+    statuses = st.multiselect("Include submissions with these statuses", ["approved", "pending", "private", "rejected"],
+                              default=["approved"], format_func=str.title, key="export_statuses")
     if any(status != "approved" for status in statuses):
         st.warning("This export includes submissions that are not approved for the gallery. Check before sharing.")
     order = st.selectbox("Photograph order", ["Year (oldest first)", "Submission date (oldest first)"])
-    formats = st.multiselect("File formats", ["PowerPoint (.pptx)", "PDF (.pdf)"], default=["PowerPoint (.pptx)", "PDF (.pdf)"])
+    formats = st.multiselect("File formats", ["PowerPoint (.pptx)", "PDF (.pdf)"],
+                             default=["PowerPoint (.pptx)", "PDF (.pdf)"])
     rows = sort_export_rows(export_rows(submissions, statuses), order)
-    st.caption(
-        f"{len(rows)} photograph(s) selected. Unknown years are placed last when sorting by year. "
-        "Missing years and captions are left blank. Long captions continue on additional slides/pages."
-    )
-    st.info(
-        "For Google Slides: download the PowerPoint file, upload it to Google Drive, "
-        "open it with Google Slides, then choose File → Save as Google Slides. "
-        "The PDF is ready for viewing or printing."
-    )
-    signature = hashlib.sha256(json.dumps({
-        "version": EXPORT_VERSION, "rows": rows, "formats": sorted(formats),
-        "bucket": str(st.secrets["SUPABASE_BUCKET"]),
-    }, sort_keys=True, default=str).encode()).hexdigest()
+    st.caption(f"{len(rows)} photograph(s) selected. Unknown years are placed last when sorting by year. Missing years and captions are left blank. Long captions continue on additional slides/pages.")
+    st.info("For Google Slides: download the PowerPoint file, upload it to Google Drive, open it with Google Slides, then choose File → Save as Google Slides. The PDF is ready for viewing or printing.")
+    signature = hashlib.sha256(json.dumps({"version": EXPORT_VERSION, "rows": rows, "formats": sorted(formats),
+                                           "bucket": str(st.secrets["SUPABASE_BUCKET"])},
+                                          sort_keys=True, default=str).encode()).hexdigest()
     prepared = st.session_state.get("prepared_export")
     if prepared and prepared["signature"] != signature:
         st.session_state.pop("prepared_export", None)
         prepared = None
-    st.caption(
-        "Large exports can take time and use substantial server memory. "
-        "If needed, prepare one file format at a time."
-    )
+    st.caption("Large exports can take time and use substantial server memory. If needed, prepare one file format at a time.")
     if st.button("Prepare export files", type="primary", disabled=not rows or not formats, width="stretch"):
         st.session_state.pop("prepared_export", None)
         prepared = None
@@ -849,12 +897,10 @@ def render_export(client, submissions):
         st.success(f"Ready: {prepared['photos']} photograph(s), {prepared['pages']} slide(s)/page(s).")
         for extension, data in prepared["files"].items():
             is_pptx = extension == "pptx"
-            st.download_button(
-                "Download PowerPoint for Google Slides" if is_pptx else "Download PDF",
-                data=data, file_name=f"john_francis_lismore_memories.{extension}",
-                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation" if is_pptx else "application/pdf",
-                key=f"download_{extension}", width="stretch", on_click="ignore",
-            )
+            st.download_button("Download PowerPoint for Google Slides" if is_pptx else "Download PDF", data=data,
+                               file_name=f"john_francis_lismore_memories.{extension}",
+                               mime="application/vnd.openxmlformats-officedocument.presentationml.presentation" if is_pptx else "application/pdf",
+                               key=f"download_{extension}", width="stretch", on_click="ignore")
     st.divider()
     st.subheader("CSV export")
     st.caption("Includes all statuses, including private and rejected submissions, as in the existing export.")
@@ -863,10 +909,8 @@ def render_export(client, submissions):
         st.info("No photographs to export yet.")
         return
     frame = pd.DataFrame(all_rows)
-    st.download_button(
-        "Download CSV for Google Sheets", data=frame.to_csv(index=False).encode("utf-8-sig"),
-        file_name="wake_photo_submissions.csv", mime="text/csv", width="stretch", on_click="ignore",
-    )
+    st.download_button("Download CSV for Google Sheets", data=frame.to_csv(index=False).encode("utf-8-sig"),
+                       file_name="wake_photo_submissions.csv", mime="text/csv", width="stretch", on_click="ignore")
     st.dataframe(frame, width="stretch")
 
 
@@ -879,7 +923,8 @@ def render_curator_dashboard():
         LOGGER.exception("Could not load curator data")
         st.error("Could not load photographs. Please try again.")
         return
-    area = st.radio("Dashboard view", ["Timeline", "Gallery", "Review and edit", "Export"], horizontal=True, key="curator_view")
+    area = st.radio("Dashboard view", ["Timeline", "Gallery", "Slideshow", "Review and edit", "Export"],
+                    horizontal=True, key="curator_view")
     if area == "Timeline":
         if not submissions:
             st.info("No photographs have been received yet.")
@@ -892,6 +937,8 @@ def render_curator_dashboard():
                     st.write(f"Years: {label}")
     elif area == "Gallery":
         render_gallery(client, submissions)
+    elif area == "Slideshow":
+        render_slideshow(client, submissions)
     elif area == "Review and edit":
         render_review(client, submissions)
     else:
